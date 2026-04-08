@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psr-output-analysis-mcp"
+version = "0.0.1"
+description = "MCP server for Analyse SDDP Outputs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0",
+    "psr-output-analysis"
+]
+
+[project.scripts]
+mcp-psr-output-analysis = "psr.outputanalysismcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["psr.outputanalysismcp*"]
