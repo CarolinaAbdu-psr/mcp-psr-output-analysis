@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "mcp[cli]>=1.0",
-    "psr-output-analysis"
+    "pandas"
 ]
 
 [project.scripts]
