@@ -1,0 +1,41 @@
+[
+  {
+    "id": "exec_time_iteration_growth",
+    "topic": "execution_time",
+    "title": "Execution Time Growth per Iteration: Cut Accumulation and Forward/Backward Asymmetry",
+    "related_problems": [
+      "slow_execution",
+      "increasing_iteration_time",
+      "forward_backward_asymmetry"
+    ],
+    "content": "Two structural phenomena explain the typical execution time profile across SDDP iterations. **A. Cut Accumulation:** In early iterations the problem is solved quickly because very few Benders cuts have been generated and the Future Cost Function (FCF) is still a coarse approximation. As the algorithm progresses, each backward pass adds new cuts to the pool, making the FCF increasingly detailed. The solver must then process a growing number of linear constraints per stage in every subsequent iteration. This causes a gradual and expected growth in execution time per iteration — it is a natural consequence of the algorithm enriching the FCF. Sudden, non-linear acceleration in iteration time (i.e., time growing much faster than the cut count) may indicate cut pool inefficiency, solver memory pressure, or degradation of the LP basis warm-start quality. **B. Forward vs. Backward Asymmetry:** The backward phase always takes longer than the forward phase. In the forward pass, the algorithm traverses x simulated series to evaluate the current policy — one optimisation per stage per series. In the backward pass, the algorithm performs y uncertainty-scenario openings (subproblems) for each of those x series, solving x·y subproblems per stage in total. This large volume of optimisations is necessary to build the new Benders cuts that will refine the FCF for the next iteration. Consequently, a backward/forward time ratio close to y is expected and healthy. A ratio significantly greater than y is a warning sign: it may indicate that the backward subproblems are individually harder than the forward ones (e.g., due to active binary variables, near-infeasible scenarios, or a poorly conditioned constraint matrix), and deserves further investigation.",
+    "references": [
+      {
+        "title": "SDDP User Manual — Chapter 6: Performance Monitoring",
+        "url": "https://psr-inc.com/software/sddp/"
+      }
+    ],
+    "language": "en",
+    "version": "1.0"
+  },
+  {
+    "id": "exec_time_dispersion_causes",
+    "topic": "execution_time",
+    "title": "Stage Execution Time Dispersion: MIP, Intertemporal Coupling, and Feasibility Tightness",
+    "related_problems": [
+      "high_stage_time",
+      "mip_complexity",
+      "intertemporal_coupling",
+      "feasibility_tightness"
+    ],
+    "content": "When execution time varies significantly across stages or scenarios — i.e., high dispersion (maximum stage time much greater than the average) — three structural causes should be investigated. **A. Discrete Decisions and Binary Variables (MIP Complexity):** Thermal unit Uptime/Downtime requirements or pump activation constraints convert the linear programming (LP) subproblem into a Mixed-Integer Program (MIP). MIP solvers use branch-and-bound or branch-and-cut methods that, in the worst case, consume exponentially more CPU than LP solvers. Stages with high dispersion (max >> average) are a strong signal that binary variables are only binding in certain scenarios (e.g., peak-demand or low-hydrology scenarios), making those subproblems significantly harder than the typical case. **B. Intertemporal Resource Coupling:** Constraints that link a decision in one period to the state of a previous stage — such as ramp-rate limits on thermal units, end-of-period reservoir volume targets, or maximum depletion rules — prevent the model from solving periods independently. This chaining forces the algorithm to process a much denser constraint matrix, since the feasibility of each stage depends on the trajectory of prior stages. The solver requires additional effort to find a consistent trajectory that satisfies all coupling constraints simultaneously, increasing both solve time and sensitivity to the initial basis. **C. Solution Space Tightness (Feasibility Tightness):** In critical scenarios such as severe hydrological droughts or demand peaks, system slack disappears. When the model operates near the physical limits of transmission capacity, reservoir storage, or generation capacity, the feasible region becomes very narrow. The solver must perform many more internal iterations (simplex pivots or branch-and-bound nodes) to certify that no hard constraint is violated, leading to a significant increase in local convergence time for those specific stages and scenarios. This effect is often invisible in average metrics but becomes apparent when examining the maximum or 95th-percentile stage times.",
+    "references": [
+      {
+        "title": "SDDP User Manual — Chapter 6: Performance Monitoring",
+        "url": "https://psr-inc.com/software/sddp/"
+      }
+    ],
+    "language": "en",
+    "version": "1.0"
+  }
+]
