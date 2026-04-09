@@ -9,7 +9,7 @@ from pathlib import Path
 import json
 import os
 
-from .policy_functions import get_policy_error_report, build_simulation_vs_policy_report
+from .policy_functions import get_policy_error_report, build_convergence_data_report,build_simulation_vs_policy_report
 from .cost_functions import build_cost_health_report, build_cost_dispersion_report, build_penalty_participation_report
 from .execution_time_functions import build_execution_time_report
 from .common import read_csv
@@ -108,7 +108,7 @@ def policy_convergence_report() -> str:
 
     Data sources: convergencia.csv, nuevos-cortes-por-iterac.csv
     """
-    return get_policy_error_report(RESULTS_FOLDER)
+    return build_convergence_data_report(RESULTS_FOLDER)
 
 # ---------------------------------------------------------------------------
 # Policy vs simulation 
@@ -194,6 +194,64 @@ def analyse_execution_time() -> str:
                   tiempo-de-ejecucin-polit.csv, tiempo-de-ejecucin-simul.csv
     """
     return build_execution_time_report(RESULTS_FOLDER)
+
+
+# ---------------------------------------------------------------------------
+# Prompts  (auto-available as slash commands when the MCP is connected)
+# ---------------------------------------------------------------------------
+
+# Skills content is read at import time from the bundled sddp-output-skills/
+# directory so the prompt text stays in one place (the SKILL.md files).
+
+_SKILLS_DIR = Path(__file__).parents[2] / "sddp-output-skills"
+
+
+def _load_skill(folder: str) -> str:
+    path = _SKILLS_DIR / folder / "SKILL.md"
+    return path.read_text(encoding="utf-8") if path.exists() else f"[Skill not found: {folder}]"
+
+
+@mcp.prompt()
+def sddp_analyze(study_path: str) -> str:
+    """
+    Complete SDDP output analysis: convergence, policy vs simulation,
+    cost health, cost dispersion + ENA correlation, penalty participation,
+    and execution time. Pass the path to the SDDP case folder.
+    """
+    skill = _load_skill("sddp-analyze")
+    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
+
+
+@mcp.prompt()
+def sddp_convergence(study_path: str) -> str:
+    """
+    Check SDDP policy convergence and validate the final simulation
+    against the policy confidence band. Pass the SDDP case folder path.
+    """
+    skill = _load_skill("sddp-convergence")
+    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
+
+
+@mcp.prompt()
+def sddp_costs(study_path: str) -> str:
+    """
+    Deep-dive into SDDP simulation costs: 80% health check, P10-P90
+    dispersion with ENA elasticity, and penalty participation by scenario.
+    Pass the SDDP case folder path.
+    """
+    skill = _load_skill("sddp-costs")
+    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
+
+
+@mcp.prompt()
+def sddp_performance(study_path: str) -> str:
+    """
+    Analyse SDDP computational performance: iteration time growth,
+    Forward/Backward balance, and stage-level timing hot-spots.
+    Pass the SDDP case folder path.
+    """
+    skill = _load_skill("sddp-performance")
+    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
 
 
 # ---------------------------------------------------------------------------
