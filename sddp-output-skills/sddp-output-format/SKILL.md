@@ -1,3 +1,16 @@
+---
+name: sddp-output-format
+description: >
+  Formatting rules that apply to every SDDP analysis response produced by
+  this MCP server. Governs language matching (answer in the user's language),
+  response structure (lead with verdict), Markdown tables, ASCII sparklines,
+  knowledge-base citation format with reference links, and severity labels
+  (OK / Warning / Critical). Always apply these rules before writing any
+  analysis response. Also defines the standard file exploration sequence
+  (df_get_columns + df_get_head) that must precede any analysis tool call.
+version: 1.0.0
+---
+
 # SDDP Output Format Rules
 
 Apply these rules to **every** SDDP analysis response, regardless of topic.

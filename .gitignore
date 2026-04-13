@@ -1,4 +1,6 @@
 *pycache*
 *test.py
-.claude*
+.claude/
 *egg-info*
+venv/
+*.pyc

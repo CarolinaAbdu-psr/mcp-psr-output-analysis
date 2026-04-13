@@ -81,9 +81,21 @@ mcp = FastMCP(
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _strip_frontmatter(text: str) -> str:
+    """Remove YAML frontmatter (--- ... ---) from the start of the text."""
+    if not text.startswith("---"):
+        return text
+    end = text.find("\n---", 3)
+    if end == -1:
+        return text
+    return text[end + 4:].lstrip("\n")
+
+
 def _load_skill(folder: str) -> str:
     path = _SKILLS_DIR / folder / "SKILL.md"
-    return path.read_text(encoding="utf-8") if path.exists() else f"[Skill not found: {folder}]"
+    if not path.exists():
+        return f"[Skill not found: {folder}]"
+    return _strip_frontmatter(path.read_text(encoding="utf-8"))
 
 
 def _format_result(result: dict, title: str) -> str:

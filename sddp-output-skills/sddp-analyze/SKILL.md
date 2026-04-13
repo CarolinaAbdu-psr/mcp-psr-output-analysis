@@ -1,3 +1,16 @@
+---
+name: sddp-analyze
+description: >
+  Complete SDDP output analysis workflow covering convergence, cost health,
+  penalty participation, solver status heatmap, and computational performance.
+  Use when the user provides an SDDP case folder path and asks for a full
+  analysis, a complete report, or says something like "analyze this case",
+  "check these results", or "what do the results look like". This skill
+  orchestrates all other sddp-* skills in the correct order and produces a
+  single consolidated report with an executive summary.
+version: 1.0.0
+---
+
 # Skill: Complete SDDP Output Analysis
 
 Run a full diagnostic of an SDDP case: convergence, policy validation,

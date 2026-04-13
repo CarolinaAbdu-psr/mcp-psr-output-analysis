@@ -1,3 +1,15 @@
+---
+name: sddp-convergence
+description: >
+  Analyse SDDP policy convergence and validate the final simulation against
+  the policy confidence band. Use when the user asks whether the run converged,
+  about the quality of the operating policy, about the gap between Zinf and
+  Zsup, about policy vs simulation deviation, or mentions keywords like
+  "convergência", "convergence", "policy", "Zinf", "Zsup", or "iterations".
+  Requires an SDDP case folder with extracted CSV results.
+version: 1.0.0
+---
+
 # Skill: SDDP Convergence Analysis
 
 Perform a full convergence diagnostic for an SDDP run.

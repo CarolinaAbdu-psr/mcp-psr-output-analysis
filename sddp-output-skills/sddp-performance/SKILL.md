@@ -1,3 +1,16 @@
+---
+name: sddp-performance
+description: >
+  Analyse SDDP computational performance: iteration time growth driven by
+  cut accumulation, Forward/Backward phase balance, and stage-level timing
+  hot-spots caused by MIP complexity or intertemporal coupling. Use when
+  the user asks about execution time, run duration, performance bottlenecks,
+  slow iterations, or uses keywords like "tempo", "execution time",
+  "performance", "forward", "backward", or "iteration time".
+  Requires an SDDP case folder with extracted CSV results.
+version: 1.0.0
+---
+
 # Skill: SDDP Computational Performance Analysis
 
 Analyse the computational performance of an SDDP run.

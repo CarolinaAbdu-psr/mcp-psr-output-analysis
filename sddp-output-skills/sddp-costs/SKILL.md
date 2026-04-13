@@ -1,3 +1,16 @@
+---
+name: sddp-costs
+description: >
+  Deep-dive into SDDP simulation costs: 80% operating-cost health check,
+  P10-P90 dispersion with ENA correlation, per-stage penalty participation,
+  and MIP solver status heatmap (for hourly simulation runs). Use when the
+  user asks about costs, penalties, constraint violations, the 80% rule,
+  cost dispersion, feasibility, relaxed solutions, or uses keywords like
+  "custo", "penalidade", "penalty", "cost", "violation", "solver status",
+  or "heatmap". Requires an SDDP case folder with extracted CSV results.
+version: 1.0.0
+---
+
 # Skill: SDDP Simulation Cost Analysis
 
 Perform a deep-dive into the simulation costs of an SDDP run.
