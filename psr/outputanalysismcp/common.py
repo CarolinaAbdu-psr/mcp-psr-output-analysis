@@ -19,6 +19,13 @@ def read_csv(folder: Path, filename: str) -> pd.DataFrame:
     return df
 
 
+def read_csv_path(file_path: str | Path) -> pd.DataFrame:
+    """Read any CSV by full path, stripping BOM and header whitespace."""
+    df = pd.read_csv(Path(file_path), encoding="utf-8-sig")
+    df.columns = df.columns.str.strip()
+    return df
+
+
 def get_json_info(json_filename: str, target_id: str) -> str:
     """
     Return a formatted string for one knowledge entry from a JSON file.
