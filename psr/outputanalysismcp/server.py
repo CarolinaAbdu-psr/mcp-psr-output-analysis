@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -12,12 +13,15 @@ from mcp.server.fastmcp import FastMCP
 from .common import read_csv, read_csv_path
 from .dataframe_functions import (
     get_column_names,
+    get_dataframe_head,
+    get_dataframe_size,
     get_data_summary,
     analyze_bounds_and_reference,
     analyze_composition,
     analyze_stagnation,
     analyze_cross_correlation,
-
+    analyze_heatmap,
+    filter_by_threshold,
 )
 
 # ---------------------------------------------------------------------------
@@ -27,6 +31,13 @@ from .dataframe_functions import (
 _PACKAGE_ROOT = Path(__file__).parents[2]
 KNOWLEDGE_DIR = _PACKAGE_ROOT / "sddp_knowledge"
 _SKILLS_DIR   = _PACKAGE_ROOT / "sddp-output-skills"
+
+# Import HTML-to-CSV extractor from the project root
+sys.path.insert(0, str(_PACKAGE_ROOT))
+try:
+    from sddp_html_to_csv import export_to_csv as _export_html_to_csv  # type: ignore
+except ImportError:
+    _export_html_to_csv = None  # type: ignore
 
 RESULTS_FOLDER: Path = Path(".")
 
@@ -43,20 +54,25 @@ mcp = FastMCP(
         "tools and documentation are in English but your answers must match the user's language. "
 
         "## Standard workflow "
-        "1. get_avaliable_results(study_path) — set the results folder. "
-        "2. Convergence: analyse_policy_convergence() → analyse_policy_vs_simulation(). "
-        "3. Cost: analyse_cost_health() → analyse_cost_dispersion() → analyse_penalty_participation() if needed. "
-        "4. Performance: analyse_execution_time(). "
-        "5. Knowledge: get_sddp_knowledge(topics, problems) when a diagnosis needs theoretical grounding. "
-        "6. Charts: call the chart_* tools to dispatch visual graphs whenever you present numerical data. "
+        "0. extract_html_results(study_path) — parse the SDDP dashboard HTML and export all "
+        "   charts as CSV files into the results/ folder. Call ONCE per session before anything else. "
+        "1. get_avaliable_results(study_path) — set the results folder and see available CSVs. "
+        "2. Convergence: use df_* tools on the convergence CSV, then policy-vs-simulation CSV. "
+        "3. Cost: use df_* tools on the simulation cost CSV (80% rule, dispersion, penalties). "
+        "4. Performance: use df_* tools on the execution time CSV. "
+        "5. Knowledge: call get_sddp_knowledge(topics, problems) whenever a diagnosis needs "
+        "   theoretical grounding. Always embed the relevant knowledge in your answer with references. "
+        "6. Output: follow sddp_output_format rules — match user language, use tables/charts, "
+        "   cite knowledge base entries with their reference links. "
 
         "## Rules "
-        "- Always call get_avaliable_results before any analysis tool. "
-        "- Call analyse_policy_convergence before drawing conclusions about policy quality. "
+        "- Call extract_html_results before get_avaliable_results on a fresh session. "
+        "- Always call get_avaliable_results before any df_* analysis tool. "
         "- Respond in the user's language — not in English unless the user wrote in English. "
         "- Lead with conclusions; use tables for per-stage data. "
-        "- See skill prompts (sddp_analyze, sddp_convergence, sddp_costs, sddp_performance) "
-        "  for detailed step-by-step guidance. "
+        "- Always cite the knowledge base entry (id + reference URL) when explaining a diagnosis. "
+        "- See skill prompts (sddp_analyze, sddp_convergence, sddp_costs, sddp_performance, "
+        "  sddp_output_format) for detailed step-by-step guidance. "
     ),
 )
 
@@ -115,13 +131,49 @@ def _load_csv(file_path: str) -> tuple[object, str | None]:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
+def extract_html_results(study_path: str) -> list[str]:
+    """
+    Parse the SDDP dashboard HTML file found in the study folder and export
+    every chart as a CSV into {study_path}/results/.
+
+    This is STEP 0 of every analysis session. Call it once before
+    get_avaliable_results so that the results folder is populated.
+
+    Args:
+        study_path: Absolute path to the SDDP case folder.  The tool searches
+                    for *.html files directly inside this folder.
+
+    Returns:
+        List of CSV file paths created, or error strings for any failures.
+    """
+    if _export_html_to_csv is None:
+        return ["[Error] sddp_html_to_csv module not available. Check installation."]
+
+    study = Path(study_path)
+    html_files = list(study.glob("*.html"))
+    if not html_files:
+        return ["[Error] No HTML file found in the study folder. Expected an SDDP dashboard .html file."]
+
+    output_dir = study / "results"
+    saved: list[str] = []
+    for html_file in html_files:
+        try:
+            files = _export_html_to_csv(str(html_file), output_dir=str(output_dir), verbose=False)
+            saved.extend(files)
+        except Exception as exc:
+            saved.append(f"[Error] {html_file.name}: {exc}")
+
+    return saved
+
+
+@mcp.tool()
 def get_avaliable_results(study_path: str) -> list[str]:
     """Set the results folder and return the list of available CSV files."""
     global RESULTS_FOLDER
     RESULTS_FOLDER = Path(os.path.join(study_path, "results"))
     return [f.name for f in RESULTS_FOLDER.iterdir() if f.is_file()]
 
-    
+
 # ---------------------------------------------------------------------------
 # SDDP Knowledge base
 # ---------------------------------------------------------------------------
@@ -259,6 +311,102 @@ def df_get_columns(file_path: str) -> str:
     ]
     for i, c in enumerate(cols, 1):
         lines.append(f"  {i:>3}. {c}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def df_get_head(file_path: str, n: int = 5) -> str:
+    """
+    Return the first N rows of a CSV as a formatted table, plus shape info.
+
+    Call this alongside df_get_columns to understand not just the column names
+    but also the actual data format, scale, and value conventions (e.g. whether
+    values are integers, percentages, or timestamps).
+
+    Args:
+        file_path: Absolute path to the CSV file.
+        n:         Number of rows to return. Default 5.
+    """
+    df, err = _load_csv(file_path)
+    if err:
+        return err
+
+    result = get_dataframe_head(df, n)
+    n_rows = result["shape"]["rows"]
+    n_cols = result["shape"]["columns"]
+    cols   = result["columns"]
+    rows   = result["sample_rows"]
+
+    # Build a fixed-width table
+    col_widths = [
+        max(len(str(c)), max((len(str(r.get(c, ""))) for r in rows), default=1))
+        for c in cols
+    ]
+
+    def _fmt_row(values: list) -> str:
+        return "| " + " | ".join(str(v).ljust(w) for v, w in zip(values, col_widths)) + " |"
+
+    sep = "|" + "|".join("-" * (w + 2) for w in col_widths) + "|"
+
+    lines = [
+        f"=== FIRST {min(n, n_rows)} ROWS — {Path(file_path).name} ===",
+        "",
+        f"  Shape: {n_rows} rows × {n_cols} columns",
+        "",
+        _fmt_row(cols),
+        sep,
+    ]
+    for row in rows:
+        lines.append(_fmt_row([row.get(c, "") for c in cols]))
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def df_get_size(file_path: str, max_cells: int = 500) -> str:
+    """
+    Report the shape of a CSV file. If total cells ≤ max_cells, include the
+    full content so the LLM can read it directly without further tool calls.
+
+    Use this to decide: small file → read inline; large file → use targeted
+    df_* analysis tools instead.
+
+    Args:
+        file_path: Absolute path to the CSV file.
+        max_cells: Cell-count ceiling for inline content. Default 500.
+                   Raise to 2000 for moderately sized files.
+    """
+    df, err = _load_csv(file_path)
+    if err:
+        return err
+
+    result  = get_dataframe_size(df, max_cells)
+    n_rows  = result["shape"]["rows"]
+    n_cols  = result["shape"]["columns"]
+    total   = result["shape"]["total_cells"]
+
+    lines = [
+        f"=== SIZE — {Path(file_path).name} ===",
+        "",
+        f"  Rows        : {n_rows}",
+        f"  Columns     : {n_cols}",
+        f"  Total cells : {total}",
+        f"  Threshold   : {max_cells}",
+        "",
+    ]
+
+    if result["downloadable"]:
+        lines += [
+            "Full content (all rows fit within threshold):",
+            "",
+            result["full_content"],
+        ]
+    else:
+        lines.append(
+            f"[Content not included — {total} cells exceeds threshold {max_cells}. "
+            f"Use df_get_head() to preview structure or targeted df_* tools for analysis.]"
+        )
+
     return "\n".join(lines)
 
 
@@ -465,6 +613,120 @@ def df_cross_correlation(
     return _format_result(result, title)
 
 
+@mcp.tool()
+def df_analyze_heatmap(
+    file_path: str,
+    mode: str = "solver_status",
+    label_col: str = "",
+    value_cols_json: str = "",
+    threshold: float = 0.0,
+    top_n: int = 10,
+) -> str:
+    """
+    Analyse a stage × scenario matrix (heatmap) and rank critical cells.
+
+    Two modes:
+
+    **solver_status** — integer codes 0-3 per cell:
+        0 = Optimal, 1 = Feasible, 2 = Relaxed, 3 = No Solution.
+        Critical = any cell > 0.  Returns the full status distribution plus
+        the scenarios and stages with the most non-optimal occurrences.
+
+    **threshold** — continuous values (e.g. penalty-participation %):
+        Critical = any cell > threshold.  Returns the scenarios and stages
+        with the most exceedances.
+
+    Use for:
+    - SDDP MIP solver status heatmap (hourly simulation)
+    - Penalty-participation heatmap (% per stage × scenario)
+
+    Args:
+        file_path:       Absolute path to the CSV file.
+        mode:            "solver_status" (default) or "threshold".
+        label_col:       Column that labels rows (e.g. "Stage"). Leave empty
+                         to use the row index.
+        value_cols_json: JSON array of scenario column names to analyse.
+                         Leave empty to auto-detect all numeric columns.
+                         Example: '["Scenario 1", "Scenario 2"]'
+        threshold:       Criticality cutoff for "threshold" mode. Default 0.0.
+        top_n:           Maximum entries in ranked lists. Default 10.
+    """
+    df, err = _load_csv(file_path)
+    if err:
+        return err
+
+    value_cols: list[str] | None = None
+    if value_cols_json.strip():
+        try:
+            value_cols = json.loads(value_cols_json)
+        except json.JSONDecodeError as exc:
+            return f"[Error] Invalid JSON in value_cols_json: {exc}"
+
+    result = analyze_heatmap(
+        df,
+        label_col=label_col or None,
+        value_cols=value_cols,
+        mode=mode,
+        threshold=threshold,
+        top_n=top_n,
+    )
+    title = f"HEATMAP ANALYSIS ({mode.upper()}) — {Path(file_path).name}"
+    return _format_result(result, title)
+
+
+@mcp.tool()
+def df_filter_above_threshold(
+    file_path: str,
+    threshold: float,
+    label_col: str = "",
+    value_cols_json: str = "",
+    direction: str = "above",
+    top_n: int = 10,
+) -> str:
+    """
+    Find which columns exceed (or fall below) a threshold at each stage.
+
+    Use for time-varying bar-chart data where rows = stages and columns =
+    agents / penalties.  Returns per-stage lists of which agents breached
+    the threshold, and ranks agents by how often they breach it overall.
+
+    Args:
+        file_path:       Absolute path to the CSV file.
+        threshold:       Numeric boundary value.
+        label_col:       Row-label column (e.g. "Stage"). Leave empty for
+                         row-index labels.
+        value_cols_json: JSON array of columns to check. Leave empty to
+                         auto-detect all numeric columns.
+                         Example: '["Pen: Vertimiento", "Pen: Déficit"]'
+        direction:       "above" (default, flag > threshold) or
+                         "below" (flag < threshold).
+        top_n:           Maximum entries in ranked lists. Default 10.
+    """
+    df, err = _load_csv(file_path)
+    if err:
+        return err
+
+    value_cols: list[str] | None = None
+    if value_cols_json.strip():
+        try:
+            value_cols = json.loads(value_cols_json)
+        except json.JSONDecodeError as exc:
+            return f"[Error] Invalid JSON in value_cols_json: {exc}"
+
+    result = filter_by_threshold(
+        df,
+        threshold=threshold,
+        label_col=label_col or None,
+        value_cols=value_cols,
+        direction=direction,
+        top_n=top_n,
+    )
+    title = (
+        f"THRESHOLD FILTER ({direction.upper()} {threshold}) — {Path(file_path).name}"
+    )
+    return _format_result(result, title)
+
+
 # ---------------------------------------------------------------------------
 # Prompts (slash commands)
 # ---------------------------------------------------------------------------
@@ -510,6 +772,16 @@ def sddp_performance(study_path: str) -> str:
     """
     skill = _load_skill("sddp-performance")
     return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
+
+
+@mcp.prompt()
+def sddp_output_format() -> str:
+    """
+    Load the output formatting rules for all SDDP analysis responses.
+    These rules govern language matching, visualization style, and
+    knowledge-base citation format. Apply to every analysis response.
+    """
+    return _load_skill("sddp-output-format")
 
 
 # ---------------------------------------------------------------------------

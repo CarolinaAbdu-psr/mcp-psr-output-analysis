@@ -12,6 +12,12 @@ Schema inspection
     get_column_names(df)
         Returns the list of column names — the LLM's first call on an unknown file.
 
+    get_dataframe_head(df, n)
+        Returns the first N rows plus shape info — reveals data format and scale.
+
+    get_dataframe_size(df, max_cells)
+        Returns shape.  If total cells <= max_cells, also returns the full CSV.
+
 Flexible statistics
     get_data_summary(df, operations_dict)
         Applies a user-specified set of operations (mean/std/min/max) to
@@ -38,6 +44,20 @@ Cross-dataframe correlation
     analyze_cross_correlation(df_a, df_b, col_a, col_b, join_on, ...)
         Aligns two DataFrames, computes Pearson r, R², and elasticity, and
         optionally exports a scatter-plot CSV.
+
+Heatmap / matrix analysis
+    analyze_heatmap(df, label_col, value_cols, mode, threshold, top_n)
+        Analyses a stage×scenario matrix.  Two modes:
+        - "solver_status": values 0–3 (optimal/feasible/relaxed/no-solution);
+          critical = any cell > 0.
+        - "threshold": continuous values (e.g. penalty %); critical = cell > threshold.
+        Returns per-scenario and per-stage criticality rankings.
+
+Threshold filtering
+    filter_by_threshold(df, threshold, label_col, value_cols, direction, top_n)
+        For time-varying bar-chart data (rows = stages, columns = agents/penalties).
+        Identifies which columns exceed (or fall below) a threshold at each stage,
+        and ranks columns by exceedance frequency.
 """
 from __future__ import annotations
 
@@ -74,6 +94,58 @@ def get_column_names(df: pd.DataFrame) -> list[str]:
         ['Iteration', 'Zinf', 'Zsup', 'Zsup +- Tol (low)', 'Zsup +- Tol (high)']
     """
     return df.columns.tolist()
+
+
+def get_dataframe_head(df: pd.DataFrame, n: int = 5) -> dict:
+    """
+    Return the first N rows of the DataFrame together with shape info.
+
+    Useful immediately after ``get_column_names`` to understand the actual data
+    format, numeric scale, and naming conventions before choosing analysis
+    parameters.
+
+    Args:
+        df: Any DataFrame.
+        n:  Number of rows to include. Default 5.
+
+    Returns:
+        Dict with keys:
+            ``shape``       — ``{"rows": int, "columns": int}``
+            ``columns``     — list of column name strings
+            ``sample_rows`` — list of row dicts (one dict per row, keys = column names)
+    """
+    head = df.head(n)
+    return {
+        "shape": {"rows": len(df), "columns": len(df.columns)},
+        "columns": df.columns.tolist(),
+        "sample_rows": head.to_dict(orient="records"),
+    }
+
+
+def get_dataframe_size(df: pd.DataFrame, max_cells: int = 500) -> dict:
+    """
+    Report the shape of a DataFrame.  If total cells ≤ max_cells, include
+    the full CSV content so the LLM can read it directly.
+
+    Args:
+        df:        Any DataFrame.
+        max_cells: Cell-count ceiling for inline content. Default 500.
+
+    Returns:
+        Dict with keys:
+            ``shape``        — ``{"rows": int, "columns": int, "total_cells": int}``
+            ``downloadable`` — True if content is included
+            ``full_content`` — CSV string (only present when downloadable is True)
+    """
+    n_rows, n_cols = df.shape
+    total = n_rows * n_cols
+    result: dict = {
+        "shape": {"rows": n_rows, "columns": n_cols, "total_cells": total},
+        "downloadable": total <= max_cells,
+    }
+    if total <= max_cells:
+        result["full_content"] = df.to_csv()
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -594,4 +666,305 @@ def analyze_cross_correlation(
             "csv_saved": csv_saved,
             "path":      output_csv_path,
         },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Heatmap / matrix analysis
+# ---------------------------------------------------------------------------
+
+#: Mapping from integer solver status code to human-readable label.
+SOLVER_STATUS_LABELS: dict[int, str] = {
+    0: "Optimal",
+    1: "Feasible",
+    2: "Relaxed",
+    3: "No Solution",
+}
+
+
+def analyze_heatmap(
+    df: pd.DataFrame,
+    label_col: str | None = None,
+    value_cols: list[str] | None = None,
+    mode: str = "solver_status",
+    threshold: float = 0.0,
+    top_n: int = 10,
+) -> dict:
+    """
+    Analyse a stage × scenario matrix and identify critical cells.
+
+    Designed for two types of SDDP heatmap outputs:
+
+    **Solver-status heatmap** (``mode="solver_status"``)
+        Each cell is an integer 0–3:
+        0 = Optimal, 1 = Feasible, 2 = Relaxed, 3 = No Solution.
+        Critical cells are any cell with value > 0.
+
+    **Penalty / continuous heatmap** (``mode="threshold"``)
+        Each cell is a continuous value (e.g. penalty-participation %).
+        Critical cells are any cell > ``threshold``.
+
+    Args:
+        df:         DataFrame where rows = stages and columns = scenarios
+                    (plus an optional label column).
+        label_col:  Name of the row-label column (e.g. ``"Stage"``).
+                    If ``None`` or not found, uses the row integer index.
+        value_cols: Explicit list of scenario column names.
+                    If ``None``, auto-detects all numeric columns except
+                    ``label_col``.
+        mode:       ``"solver_status"`` (integer codes 0–3) or
+                    ``"threshold"`` (continuous, compare against threshold).
+        threshold:  Used only in ``"threshold"`` mode. Default 0.0.
+        top_n:      Maximum number of entries in the ranked lists. Default 10.
+
+    Returns:
+        Dict with sections:
+
+        ``summary``
+            total_cells, critical_cells, critical_pct, n_stages, n_scenarios,
+            mode (+ status_distribution for solver_status mode).
+
+        ``top_critical_scenarios``
+            Scenarios ranked by number of critical stages (descending).
+            Each entry: scenario name, count, list of affected stage labels.
+
+        ``top_critical_stages``
+            Stages ranked by number of critical scenarios (descending).
+            Each entry: stage label, count, list of affected scenario names.
+
+    Example::
+
+        result = analyze_heatmap(
+            df_solver,
+            label_col="Stage",
+            mode="solver_status",
+        )
+        result = analyze_heatmap(
+            df_penalty,
+            label_col="Stage",
+            mode="threshold",
+            threshold=5.0,
+        )
+    """
+    if df.empty:
+        return {"error": "DataFrame is empty"}
+
+    # --- Resolve value columns ---
+    if value_cols is None:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        value_cols = [c for c in numeric_cols if c != label_col]
+
+    if not value_cols:
+        return {"error": "No numeric value columns found. Specify value_cols explicitly."}
+
+    # --- Row labels ---
+    if label_col and label_col in df.columns:
+        labels: list = df[label_col].tolist()
+    else:
+        labels = list(range(len(df)))
+
+    data = df[value_cols].values.astype(float)   # shape: (n_stages, n_scenarios)
+    n_stages, n_scenarios = data.shape
+
+    # --- Critical mask ---
+    if mode == "solver_status":
+        critical_mask = data > 0
+    else:
+        critical_mask = data > threshold
+
+    total_cells    = data.size
+    critical_count = int(critical_mask.sum())
+    critical_pct   = critical_count / total_cells * 100 if total_cells > 0 else 0.0
+
+    # --- Solver status distribution (mode-specific) ---
+    status_distribution: dict = {}
+    if mode == "solver_status":
+        unique_vals, counts = np.unique(data.astype(int), return_counts=True)
+        for v, c in zip(unique_vals, counts):
+            label = SOLVER_STATUS_LABELS.get(int(v), f"Status {int(v)}")
+            status_distribution[label] = int(c)
+
+    # --- Per-scenario summary ---
+    scenario_counts: list[tuple[str, int, list[str]]] = []
+    for col_idx, col_name in enumerate(value_cols):
+        col_mask  = critical_mask[:, col_idx]
+        cnt       = int(col_mask.sum())
+        if cnt > 0:
+            affected = [str(labels[r]) for r in range(n_stages) if col_mask[r]]
+            scenario_counts.append((col_name, cnt, affected))
+    scenario_counts.sort(key=lambda x: x[1], reverse=True)
+
+    # --- Per-stage summary ---
+    stage_counts: list[tuple[str, int, list[str]]] = []
+    for row_idx, stage_label in enumerate(labels):
+        row_mask = critical_mask[row_idx, :]
+        cnt      = int(row_mask.sum())
+        if cnt > 0:
+            affected = [value_cols[c] for c in range(n_scenarios) if row_mask[c]]
+            stage_counts.append((str(stage_label), cnt, affected))
+    stage_counts.sort(key=lambda x: x[1], reverse=True)
+
+    # --- Build result ---
+    summary: dict = {
+        "total_cells":    total_cells,
+        "critical_cells": critical_count,
+        "critical_pct":   critical_pct,
+        "n_stages":       n_stages,
+        "n_scenarios":    n_scenarios,
+        "mode":           mode,
+    }
+    if mode == "solver_status":
+        summary["status_distribution"] = status_distribution
+    else:
+        summary["threshold_applied"] = threshold
+
+    return {
+        "summary": summary,
+        "top_critical_scenarios": [
+            {
+                "scenario":              name,
+                "critical_stages_count": cnt,
+                "affected_stages":       stages,
+            }
+            for name, cnt, stages in scenario_counts[:top_n]
+        ],
+        "top_critical_stages": [
+            {
+                "stage":                    stage,
+                "critical_scenarios_count": cnt,
+                "affected_scenarios":       scens,
+            }
+            for stage, cnt, scens in stage_counts[:top_n]
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Threshold filtering (time-varying bar-chart data)
+# ---------------------------------------------------------------------------
+
+def filter_by_threshold(
+    df: pd.DataFrame,
+    threshold: float,
+    label_col: str | None = None,
+    value_cols: list[str] | None = None,
+    direction: str = "above",
+    top_n: int = 10,
+) -> dict:
+    """
+    Find cells that exceed (or fall below) a threshold in a stage × agent table.
+
+    Designed for bar-chart output files where rows represent time steps / stages
+    and columns represent agents (penalties, generators, etc.).
+
+    Args:
+        df:         DataFrame with rows = stages, columns = agents.
+        threshold:  Numeric boundary value.
+        label_col:  Name of the row-label column (e.g. ``"Stage"``).
+                    If ``None``, uses the row integer index.
+        value_cols: Columns to inspect.  If ``None``, auto-detects all numeric
+                    columns except ``label_col``.
+        direction:  ``"above"`` (default) — flag cells > threshold.
+                    ``"below"``           — flag cells < threshold.
+        top_n:      Maximum entries in ranked output lists. Default 10.
+
+    Returns:
+        Dict with sections:
+
+        ``summary``
+            threshold, direction, total_exceedances, columns_checked,
+            stages_with_exceedances.
+
+        ``top_exceeding_columns``
+            Columns ranked by exceedance count (descending).
+            Each entry: column name, total_exceedances, max_value,
+            mean_value_when_exceeded.
+
+        ``by_stage``
+            Per-stage list (limited to top_n stages with most exceedances).
+            Each entry: stage label, list of {column, value} pairs that
+            exceeded the threshold at that stage.
+
+    Example::
+
+        result = filter_by_threshold(
+            df_penalties,
+            threshold=5.0,
+            label_col="Stage",
+            direction="above",
+        )
+    """
+    if df.empty:
+        return {"error": "DataFrame is empty"}
+
+    # --- Resolve columns ---
+    if value_cols is None:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        value_cols = [c for c in numeric_cols if c != label_col]
+
+    if not value_cols:
+        return {"error": "No numeric value columns found. Specify value_cols explicitly."}
+
+    # --- Row labels ---
+    if label_col and label_col in df.columns:
+        labels: list = df[label_col].tolist()
+    else:
+        labels = list(range(len(df)))
+
+    data = df[value_cols]
+
+    if direction == "above":
+        mask = data > threshold
+    else:
+        mask = data < threshold
+
+    # --- Per-column summary ---
+    col_stats: list[tuple[str, int, float, float]] = []
+    for col in value_cols:
+        cnt = int(mask[col].sum())
+        exceeded_vals = data.loc[mask[col], col]
+        max_val  = float(data[col].max())
+        mean_exc = float(exceeded_vals.mean()) if not exceeded_vals.empty else 0.0
+        col_stats.append((col, cnt, max_val, mean_exc))
+    col_stats.sort(key=lambda x: x[1], reverse=True)
+
+    # --- Per-stage breakdown ---
+    stage_rows: list[tuple[int, str, list[dict]]] = []
+    for i, stage_label in enumerate(labels):
+        row_mask = mask.iloc[i]
+        exceeded = [
+            {"column": col, "value": float(data[col].iloc[i])}
+            for col in value_cols
+            if row_mask[col]
+        ]
+        if exceeded:
+            exceeded.sort(key=lambda x: abs(x["value"]), reverse=True)
+            stage_rows.append((len(exceeded), str(stage_label), exceeded))
+
+    stage_rows.sort(key=lambda x: x[0], reverse=True)
+
+    total_exceedances = sum(c[1] for c in col_stats)
+
+    return {
+        "summary": {
+            "threshold":               threshold,
+            "direction":               direction,
+            "total_exceedances":       total_exceedances,
+            "columns_checked":         len(value_cols),
+            "stages_with_exceedances": len(stage_rows),
+        },
+        "top_exceeding_columns": [
+            {
+                "column":                col,
+                "total_exceedances":     cnt,
+                "max_value":             max_val,
+                "mean_value_when_exceeded": mean_exc,
+            }
+            for col, cnt, max_val, mean_exc in col_stats[:top_n]
+            if cnt > 0
+        ],
+        "by_stage": [
+            {"stage": label, "exceeded": exc}
+            for _, label, exc in stage_rows[:top_n]
+        ],
     }
