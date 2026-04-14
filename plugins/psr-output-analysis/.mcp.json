@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "psr-output-analysis": {
+      "command": "python",
+      "args": ["-m", "psr.outputanalysismcp"]
+    }
+  }
+}
