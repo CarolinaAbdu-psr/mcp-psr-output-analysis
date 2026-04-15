@@ -1,0 +1,181 @@
+{
+  "id": "convergence",
+  "description": "Árvore de diagnóstico para convergência da política SDDP (Zinf / Zsup)",
+  "doc_reference": "docs/convergence.md",
+  "csv_reference": "docs/csv-schema.md#1-convergência--política",
+
+  "nodes": [
+    {
+      "id": "start",
+      "type": "action",
+      "description": "Identificar o CSV de política e verificar gap Zinf/Zsup",
+      "tool": "df_analyze_bounds",
+      "params": {
+        "target_col": "Zinf",
+        "lower_bound_col": "Lower_CI",
+        "upper_bound_col": "Upper_CI",
+        "reference_val_col": "Zsup",
+        "iteration_col": "Iteration",
+        "lock_threshold": 0.005
+      },
+      "note": "Se as colunas diferirem, use df_get_columns primeiro para descobrir os nomes reais",
+      "next_decision": "evaluate_gap"
+    },
+    {
+      "id": "evaluate_gap",
+      "type": "decision",
+      "description": "O gap Zinf/Zsup está dentro da tolerância?",
+      "branches": [
+        {
+          "condition": "bounds_status indica que Zinf está dentro do intervalo de confiança OU gap <= tolerância configurada",
+          "label": "CONVERGIU",
+          "next": "check_policy_vs_sim"
+        },
+        {
+          "condition": "bounds_status indica que Zinf está FORA do intervalo E stability mostra tendência de melhora (locked=false)",
+          "label": "NAO_CONVERGIU_EVOLUINDO",
+          "next": "check_iteration_limit"
+        },
+        {
+          "condition": "bounds_status indica que Zinf está FORA do intervalo E stability mostra estagnação (locked=true)",
+          "label": "NAO_CONVERGIU_ESTAGNADO",
+          "next": "check_stagnation_cause"
+        }
+      ]
+    },
+    {
+      "id": "check_policy_vs_sim",
+      "type": "action",
+      "description": "Convergiu — verificar se a simulação final está dentro do intervalo de confiança da política",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Zsup\": [\"mean\", \"std\"], \"Zinf\": [\"max\"]}"
+      },
+      "note": "Comparar o Zinf final com mean ± 1.96*(std/sqrt(N)) de Zsup",
+      "next_decision": "evaluate_policy_vs_sim"
+    },
+    {
+      "id": "evaluate_policy_vs_sim",
+      "type": "decision",
+      "description": "Simulação final está dentro do intervalo de confiança da política?",
+      "branches": [
+        {
+          "condition": "Zinf_max está dentro do IC de Zsup",
+          "label": "OK",
+          "next": "conclusion_converged_ok"
+        },
+        {
+          "condition": "Zinf_max está FORA do IC de Zsup",
+          "label": "DIVERGENCIA_POLITICA_SIM",
+          "next": "conclusion_policy_sim_gap",
+          "dig_deeper": true,
+          "additional_check": "Verificar se simulação usa variáveis binárias (não-convexidade) ou cenários externos não cobertos pela política"
+        }
+      ]
+    },
+    {
+      "id": "check_iteration_limit",
+      "type": "action",
+      "description": "Gap ainda está evoluindo — verificar se a tendência é suficientemente rápida",
+      "tool": "df_analyze_stagnation",
+      "params": {
+        "target_col": "Zinf",
+        "window_size": 5,
+        "cv_threshold": 1.0,
+        "slope_threshold": 0.01
+      },
+      "next_decision": "evaluate_iteration_trend"
+    },
+    {
+      "id": "evaluate_iteration_trend",
+      "type": "decision",
+      "description": "Zinf ainda está melhorando significativamente?",
+      "branches": [
+        {
+          "condition": "stagnation_results = 'Active' E slope indica melhora",
+          "label": "AINDA_MELHORANDO",
+          "next": "conclusion_more_iterations"
+        },
+        {
+          "condition": "stagnation_results = 'Stagnated'",
+          "label": "ESTAGNADO_AQUI",
+          "next": "check_stagnation_cause"
+        }
+      ]
+    },
+    {
+      "id": "check_stagnation_cause",
+      "type": "action",
+      "description": "Estagnação detectada — verificar se penalidades excessivas estão criando cortes dominados",
+      "tool": "df_analyze_composition",
+      "params": {
+        "target_cost_col": "Operating_Cost",
+        "label_col": "Iteration",
+        "min_threshold": 80.0,
+        "max_threshold": 0.0
+      },
+      "note": "Se Operating_Cost < 80% do Total, penalidades estão contaminando a função objetivo",
+      "next_decision": "evaluate_stagnation_cause"
+    },
+    {
+      "id": "evaluate_stagnation_cause",
+      "type": "decision",
+      "description": "Qual é a causa da estagnação?",
+      "branches": [
+        {
+          "condition": "Operating_Cost < 80% do Total (penalidades dominando)",
+          "label": "PENALIDADES_DOMINANDO",
+          "next": "conclusion_penalty_stagnation"
+        },
+        {
+          "condition": "Operating_Cost >= 80% (penalidades OK, amostra insuficiente)",
+          "label": "AMOSTRA_INSUFICIENTE",
+          "next": "conclusion_sample_stagnation"
+        }
+      ]
+    }
+  ],
+
+  "conclusions": [
+    {
+      "id": "conclusion_converged_ok",
+      "status": "OK",
+      "title": "Política convergida e consistente com a simulação",
+      "message": "O caso atingiu o critério de convergência e a simulação final está dentro do intervalo de confiança da política. A FCF está bem aproximada.",
+      "recommendation": "Nenhuma ação necessária. Prosseguir para análise de resultados."
+    },
+    {
+      "id": "conclusion_policy_sim_gap",
+      "status": "ALERTA",
+      "title": "Convergência atingida, mas simulação diverge da política",
+      "message": "O algoritmo convergiu, mas os resultados da simulação final ficaram fora do intervalo de confiança da política.",
+      "recommendation": "Verificar: (1) Se há variáveis binárias na simulação horária → ativar opção de Não-Convexidade da Política. (2) Se a FCF foi copiada de outro caso com cenários diferentes.",
+      "doc_section": "docs/convergence.md#política-vs-simulação-final"
+    },
+    {
+      "id": "conclusion_more_iterations",
+      "status": "ALERTA",
+      "title": "Não convergiu — mais iterações necessárias",
+      "message": "O algoritmo ainda está melhorando (Zinf em tendência de subida), mas o limite máximo de iterações foi atingido antes do critério de parada.",
+      "recommendation": "Aumentar o número máximo de iterações. A convergência deve ser alcançada.",
+      "doc_section": "docs/convergence.md#causa-1--iterações-insuficientes"
+    },
+    {
+      "id": "conclusion_penalty_stagnation",
+      "status": "CRITICO",
+      "title": "Estagnação por penalidades excessivas",
+      "message": "O Zinf parou de evoluir e os custos de penalidade representam mais de 20% do custo total. Penalidades altas estão gerando cortes de Benders dominados que não aproximam corretamente a FCF.",
+      "recommendation": "Revisar calibração de penalidades. Consultar docs/violations.md para orientação de calibração.",
+      "doc_section": "docs/convergence.md#causa-2--estagnação-por-penalidades-excessivas",
+      "next_tree": "decision-trees/violations.json"
+    },
+    {
+      "id": "conclusion_sample_stagnation",
+      "status": "ALERTA",
+      "title": "Estagnação por amostra insuficiente de forward",
+      "message": "O Zinf parou de evoluir e as penalidades estão em nível aceitável. A causa provável é um número insuficiente de cenários na fase forward, limitando a exploração do espaço de estados.",
+      "recommendation": "Aumentar o número de séries de forward para melhorar a cobertura do espaço de estados.",
+      "doc_section": "docs/convergence.md#causa-3--amostra-insuficiente-de-forward"
+    }
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "id": "violations",
+  "description": "Árvore de diagnóstico para violações de restrições e calibração de penalidades",
+  "doc_reference": "docs/violations.md",
+  "csv_reference": "docs/csv-schema.md#4-violações-e-penalidades",
+
+  "nodes": [
+    {
+      "id": "start",
+      "type": "action",
+      "description": "Obter estatísticas gerais de violação — média e máximo por restrição e etapa",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Mean_Violation\": [\"mean\", \"max\", \"std\"], \"Max_Violation\": [\"mean\", \"max\"], \"Frequency\": [\"mean\", \"max\"]}"
+      },
+      "note": "Se CSV tiver múltiplas restrições, fazer df_get_summary por constraint/restrição separadamente",
+      "next_decision": "evaluate_frequency"
+    },
+    {
+      "id": "evaluate_frequency",
+      "type": "decision",
+      "description": "Qual é a frequência de violação nos cenários?",
+      "branches": [
+        {
+          "condition": "Frequency_mean < 10% — violação rara",
+          "label": "VIOLACAO_RARA",
+          "next": "conclusion_extreme_scenarios"
+        },
+        {
+          "condition": "Frequency_mean entre 10-50%",
+          "label": "VIOLACAO_MODERADA",
+          "next": "check_mean_vs_max"
+        },
+        {
+          "condition": "Frequency_mean > 50%",
+          "label": "VIOLACAO_FREQUENTE",
+          "next": "check_mean_vs_max"
+        }
+      ]
+    },
+    {
+      "id": "check_mean_vs_max",
+      "type": "action",
+      "description": "Calcular razão Média/Máximo para classificar o tipo de violação",
+      "tool": "df_analyze_composition",
+      "params": {
+        "target_cost_col": "Mean_Violation",
+        "all_cost_cols_json": "[\"Mean_Violation\", \"Max_Violation\"]",
+        "label_col": "Stage",
+        "min_threshold": 0.0,
+        "max_threshold": 0.0
+      },
+      "note": "Razão Mean/Max próxima de 1.0 indica que a violação ocorre em quase todos os cenários (estrutural)",
+      "next_decision": "evaluate_structural_vs_extreme"
+    },
+    {
+      "id": "evaluate_structural_vs_extreme",
+      "type": "decision",
+      "description": "A violação é estrutural (todos os cenários) ou apenas em extremos?",
+      "branches": [
+        {
+          "condition": "Mean_Violation / Max_Violation > 0.9 — média muito próxima do máximo",
+          "label": "ESTRUTURAL",
+          "next": "check_constraint_conflict"
+        },
+        {
+          "condition": "Mean_Violation / Max_Violation entre 0.5-0.9",
+          "label": "MODERADAMENTE_ESTRUTURAL",
+          "next": "check_seasonality"
+        },
+        {
+          "condition": "Mean_Violation / Max_Violation < 0.5 — violação principalmente em extremos",
+          "label": "APENAS_EXTREMOS",
+          "next": "check_seasonality"
+        }
+      ]
+    },
+    {
+      "id": "check_constraint_conflict",
+      "type": "action",
+      "description": "Violação estrutural — verificar se há padrão sazonal que indique conflito de restrições",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Mean_Violation\": [\"mean\", \"std\", \"min\", \"max\"], \"Frequency\": [\"mean\", \"std\"]}"
+      },
+      "note": "std baixo com mean alto → uniforme em todas as etapas (conflito). std alto → sazonal (penalidade insuficiente).",
+      "next_decision": "evaluate_conflict_type"
+    },
+    {
+      "id": "evaluate_conflict_type",
+      "type": "decision",
+      "description": "A violação é uniforme (conflito) ou sazonal (penalidade)?",
+      "branches": [
+        {
+          "condition": "std de Mean_Violation baixo (CV < 30%) — violação uniforme em todas as etapas",
+          "label": "CONFLITO_RESTRICOES",
+          "next": "conclusion_constraint_conflict"
+        },
+        {
+          "condition": "std de Mean_Violation alto (CV > 30%) — violação concentrada em algumas etapas",
+          "label": "SAZONAL_ESTRUTURAL",
+          "next": "check_seasonality"
+        }
+      ]
+    },
+    {
+      "id": "check_seasonality",
+      "type": "action",
+      "description": "Verificar em quais etapas a violação se concentra",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Mean_Violation\": [\"max\", \"mean\"], \"Frequency\": [\"max\"]}"
+      },
+      "note": "Identificar as etapas com maiores valores. Etapas de seca (tipicamente meados do ano) vs. úmidas.",
+      "next_decision": "evaluate_seasonal_pattern"
+    },
+    {
+      "id": "evaluate_seasonal_pattern",
+      "type": "decision",
+      "description": "Em que período se concentram as violações?",
+      "branches": [
+        {
+          "condition": "Violação concentrada no período seco (meses de inverno/estiagem)",
+          "label": "PERIODO_SECO",
+          "next": "conclusion_dry_season_penalty"
+        },
+        {
+          "condition": "Violação concentrada no período úmido (meses de chuva)",
+          "label": "PERIODO_UMIDO",
+          "next": "conclusion_wet_season_violation"
+        },
+        {
+          "condition": "Violação distribuída sem padrão claro",
+          "label": "SEM_PADRAO",
+          "next": "conclusion_random_violation"
+        }
+      ]
+    }
+  ],
+
+  "conclusions": [
+    {
+      "id": "conclusion_extreme_scenarios",
+      "status": "OK",
+      "title": "Violações apenas em cenários extremos",
+      "message": "Frequência de violação < 10%. As restrições são violadas apenas nos cenários mais críticos, o que é esperado em sistemas com alta variabilidade hidrológica.",
+      "recommendation": "Monitorar se a tendência piora. Verificar se os cenários extremos correspondem a P90 de ENA."
+    },
+    {
+      "id": "conclusion_constraint_conflict",
+      "status": "CRITICO",
+      "title": "Possível conflito entre restrições",
+      "message": "Violação estrutural e uniforme em todas as etapas, independente da hidrologia. Pode haver restrições mutuamente excludentes que tornam o cumprimento simultâneo impossível.",
+      "recommendation": "1) Identificar pares de restrições que disputam o mesmo recurso. 2) Verificar se geração mínima obrigatória > recurso disponível. 3) Revisar a lógica do modelo para identificar inconsistências.",
+      "doc_section": "docs/violations.md#conflito-de-restrições"
+    },
+    {
+      "id": "conclusion_dry_season_penalty",
+      "status": "ALERTA",
+      "title": "Violação concentrada no período seco — penalidade insuficiente",
+      "message": "As restrições são violadas principalmente no período seco. O modelo não está tomando decisões antecipadas de conservação de recursos porque a penalidade não justifica economicamente o custo de oportunidade.",
+      "recommendation": "Aumentar a penalidade da restrição violada para forçar o modelo a poupar recursos nas etapas úmidas, antecipando a necessidade futura no período seco.",
+      "doc_section": "docs/violations.md#violação-sazonal-concentrada-em-período-seco"
+    },
+    {
+      "id": "conclusion_wet_season_violation",
+      "status": "ALERTA",
+      "title": "Violação concentrada no período úmido",
+      "message": "As restrições são violadas no período úmido. Pode ser relacionado a vertimento, excesso de geração renovável ou restrições de capacidade de escoamento.",
+      "recommendation": "Verificar restrições de vertimento, limites de transmissão e penalidades de renováveis no período úmido. Consultar docs/marginal-costs.md para CMO negativo.",
+      "doc_section": "docs/violations.md#padrões-de-alerta-por-período",
+      "next_tree": "decision-trees/marginal-costs.json"
+    },
+    {
+      "id": "conclusion_random_violation",
+      "status": "ALERTA",
+      "title": "Violações sem padrão sazonal definido",
+      "message": "As violações ocorrem de forma aparentemente aleatória sem padrão temporal claro. Pode indicar restrição excessivamente conservadora ou problema de calibração de penalidades.",
+      "recommendation": "1) Verificar se a restrição viola uma condição que raramente é necessária → relaxar no modelo. 2) Revisar o valor da penalidade.",
+      "doc_section": "docs/violations.md#restrição-excessivamente-conservadora"
+    }
+  ]
+}

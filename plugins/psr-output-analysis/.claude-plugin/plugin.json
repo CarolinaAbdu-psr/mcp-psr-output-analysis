@@ -1,6 +1,0 @@
-{
-  "name": "psr-output-analysis",
-  "description": "SDDP simulation output analysis — convergence diagnostics, cost health, penalty participation, MIP solver status, and computational performance.",
-  "version": "1.0.0",
-  "keywords": ["sddp", "psr", "simulation", "energy", "optimization", "mcp"]
-}

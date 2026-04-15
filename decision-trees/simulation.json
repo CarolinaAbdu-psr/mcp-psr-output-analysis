@@ -1,0 +1,192 @@
+{
+  "id": "simulation",
+  "description": "Árvore de diagnóstico para qualidade da operação simulada — composição de custos e status MIP",
+  "doc_reference": "docs/simulation.md",
+  "csv_reference": "docs/csv-schema.md#2-custo-operativo--simulação",
+
+  "nodes": [
+    {
+      "id": "start",
+      "type": "action",
+      "description": "Verificar a composição do custo total — regra dos 80%",
+      "tool": "df_analyze_composition",
+      "params": {
+        "target_cost_col": "Operating_Cost",
+        "all_cost_cols_json": "[\"Operating_Cost\", \"Penalty_Cost\"]",
+        "label_col": "Stage",
+        "min_threshold": 80.0,
+        "max_threshold": 0.0
+      },
+      "note": "Adaptar nomes de colunas conforme df_get_columns. Incluir TODOS os tipos de custo em all_cost_cols_json.",
+      "next_decision": "evaluate_cost_composition"
+    },
+    {
+      "id": "evaluate_cost_composition",
+      "type": "decision",
+      "description": "O custo operativo representa pelo menos 80% do custo total?",
+      "branches": [
+        {
+          "condition": "global_summary mostra share >= 80% E criticality_report sem flagged rows",
+          "label": "COMPOSICAO_OK",
+          "next": "check_cost_dispersion"
+        },
+        {
+          "condition": "global_summary mostra share entre 60-80% OU algumas etapas abaixo de 80%",
+          "label": "PENALIDADES_ELEVADAS",
+          "next": "identify_critical_stages",
+          "dig_deeper": true
+        },
+        {
+          "condition": "global_summary mostra share < 60%",
+          "label": "PENALIDADES_DOMINANDO",
+          "next": "identify_critical_stages",
+          "dig_deeper": true
+        }
+      ]
+    },
+    {
+      "id": "identify_critical_stages",
+      "type": "action",
+      "description": "Penalidades elevadas — identificar etapas mais críticas",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Penalty_Cost\": [\"mean\", \"max\", \"std\"], \"Operating_Cost\": [\"mean\", \"min\"]}"
+      },
+      "note": "Identificar padrão temporal das penalidades. Etapas com Penalty_Cost >> média indicam concentração de violações.",
+      "next_decision": "evaluate_penalty_pattern"
+    },
+    {
+      "id": "evaluate_penalty_pattern",
+      "type": "decision",
+      "description": "As penalidades são sazonais ou uniformes?",
+      "branches": [
+        {
+          "condition": "Penalty_Cost concentrado em etapas específicas (std alto, apenas algumas stages críticas)",
+          "label": "SAZONAL",
+          "next": "conclusion_seasonal_penalties",
+          "note": "Escalar para violations.json para investigar a restrição específica"
+        },
+        {
+          "condition": "Penalty_Cost alto em todas as etapas (std baixo, uniformemente distribuído)",
+          "label": "UNIFORME",
+          "next": "conclusion_structural_penalties"
+        }
+      ]
+    },
+    {
+      "id": "check_cost_dispersion",
+      "type": "action",
+      "description": "Composição OK — verificar dispersão P10/P90 por etapa",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"P10\": [\"mean\", \"min\"], \"P90\": [\"mean\", \"max\"], \"Operating_Cost\": [\"mean\", \"std\"]}"
+      },
+      "next_decision": "evaluate_dispersion"
+    },
+    {
+      "id": "evaluate_dispersion",
+      "type": "decision",
+      "description": "A dispersão P10/P90 está em nível aceitável?",
+      "branches": [
+        {
+          "condition": "P90/P10 < 5× em média E P10 > 0 na maioria das etapas",
+          "label": "DISPERSAO_OK",
+          "next": "check_mip_status"
+        },
+        {
+          "condition": "P90/P10 > 5× OU P10 = 0 em muitas etapas",
+          "label": "ALTA_VOLATILIDADE",
+          "next": "conclusion_high_volatility",
+          "dig_deeper": true,
+          "note": "Alta volatilidade pode indicar forte dependência hídrica → checar ENA via marginal-costs.json"
+        }
+      ]
+    },
+    {
+      "id": "check_mip_status",
+      "type": "action",
+      "description": "Verificar status das soluções MIP (se aplicável à simulação)",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Solve_Time\": [\"mean\", \"max\", \"std\"]}"
+      },
+      "note": "Se CSV de status MIP existir, verificar proporção de estados Relaxed/Error. Se não existir, pular para conclusion_ok.",
+      "next_decision": "evaluate_mip_status"
+    },
+    {
+      "id": "evaluate_mip_status",
+      "type": "decision",
+      "description": "O solver MIP está com performance adequada?",
+      "branches": [
+        {
+          "condition": "Solve_Time std baixo E sem registros de Relaxed/Error no CSV de status",
+          "label": "MIP_OK",
+          "next": "conclusion_simulation_ok"
+        },
+        {
+          "condition": "Alta proporção de status Feasible/Relaxed (> 5% das etapas/cenários)",
+          "label": "MIP_SUBOTIMO",
+          "next": "conclusion_mip_suboptimal"
+        },
+        {
+          "condition": "Presença de status Error em qualquer etapa",
+          "label": "MIP_ERRO",
+          "next": "conclusion_mip_error"
+        }
+      ]
+    }
+  ],
+
+  "conclusions": [
+    {
+      "id": "conclusion_simulation_ok",
+      "status": "OK",
+      "title": "Simulação de boa qualidade",
+      "message": "Custo operativo representa ≥80% do total, dispersão P10/P90 compatível com a hidrologia e solver MIP com performance adequada.",
+      "recommendation": "Prosseguir para análise de CMO e déficit (marginal-costs.json)."
+    },
+    {
+      "id": "conclusion_seasonal_penalties",
+      "status": "ALERTA",
+      "title": "Penalidades concentradas em períodos específicos",
+      "message": "O custo de penalidades está acima do aceitável em etapas específicas, sugerindo violações sazonais.",
+      "recommendation": "Investigar quais restrições são violadas nessas etapas. Executar decision-trees/violations.json.",
+      "doc_section": "docs/simulation.md#1-porções-do-custo-operativo-total",
+      "next_tree": "decision-trees/violations.json"
+    },
+    {
+      "id": "conclusion_structural_penalties",
+      "status": "CRITICO",
+      "title": "Penalidades sistematicamente elevadas em todas as etapas",
+      "message": "O custo operativo representa menos de 60% do total em quase todas as etapas. A operação simulada é irreal — o modelo está violando restrições para viabilizar o problema.",
+      "recommendation": "1) Revisar todas as penalidades configuradas. 2) Verificar se há restrições conflitantes. 3) Executar decision-trees/violations.json.",
+      "doc_section": "docs/simulation.md#1-porções-do-custo-operativo-total",
+      "next_tree": "decision-trees/violations.json"
+    },
+    {
+      "id": "conclusion_high_volatility",
+      "status": "ALERTA",
+      "title": "Alta volatilidade de custos entre cenários",
+      "message": "A dispersão P10/P90 é muito elevada, indicando forte sensibilidade do sistema a condições hidrológicas extremas.",
+      "recommendation": "Correlacionar com ENA para confirmar dependência hídrica. Executar decision-trees/marginal-costs.json.",
+      "doc_section": "docs/simulation.md#3-dispersão-de-custos-por-etapa-p10--p90",
+      "next_tree": "decision-trees/marginal-costs.json"
+    },
+    {
+      "id": "conclusion_mip_suboptimal",
+      "status": "ALERTA",
+      "title": "Soluções MIP sub-ótimas ou relaxadas",
+      "message": "Mais de 5% das etapas/cenários apresentam status Feasible ou Relaxed. As soluções podem não ser ótimas.",
+      "recommendation": "1) Aumentar gradualmente o tempo de solução do MIP. 2) Reduzir duração das sub-etapas de 168h para 24h.",
+      "doc_section": "docs/simulation.md#4-estado-da-solução-mip-simulação-horária"
+    },
+    {
+      "id": "conclusion_mip_error",
+      "status": "CRITICO",
+      "title": "Erros no solver MIP",
+      "message": "O solver não conseguiu encontrar solução viável em algumas etapas. Pode haver restrições conflitantes.",
+      "recommendation": "1) Aumentar tempo de solução. 2) Reduzir sub-etapas para 24h. 3) Verificar restrições conflitantes (ex: geração mínima > combustível disponível).",
+      "doc_section": "docs/simulation.md#recomendações-por-estado"
+    }
+  ]
+}

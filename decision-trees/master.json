@@ -1,0 +1,56 @@
+{
+  "id": "master",
+  "description": "Ponto de entrada do diagnóstico SDDP. Classifica a pergunta e roteia para a sub-árvore correta.",
+  "version": "1.0",
+  "instructions": "Leia este arquivo primeiro. Identifique a área diagnóstica pela pergunta do usuário usando as palavras-chave abaixo. Então carregue a sub-árvore correspondente.",
+
+  "routing": [
+    {
+      "area": "convergence",
+      "keywords": ["convergiu", "convergência", "zinf", "zsup", "benders", "iteração", "cortes", "política", "fcf", "não convergiu", "gap", "limite inferior", "limite superior"],
+      "doc_file": "docs/convergence.md",
+      "tree_file": "decision-trees/convergence.json",
+      "summary": "Diagnóstico do processo de otimização e qualidade da política de operação futura"
+    },
+    {
+      "area": "simulation",
+      "keywords": ["simulação", "custo operativo", "80%", "penalidade", "mip", "ótimo", "relaxado", "factível", "erro", "solver", "custo total", "composição de custo"],
+      "doc_file": "docs/simulation.md",
+      "tree_file": "decision-trees/simulation.json",
+      "summary": "Diagnóstico da qualidade da operação simulada — custos e status do solver"
+    },
+    {
+      "area": "violations",
+      "keywords": ["violação", "penalidade", "restrição", "meta", "soft constraint", "hard constraint", "seca", "calibração", "conflito", "período seco"],
+      "doc_file": "docs/violations.md",
+      "tree_file": "decision-trees/violations.json",
+      "summary": "Diagnóstico de violações de restrições e calibração de penalidades"
+    },
+    {
+      "area": "marginal_costs",
+      "keywords": ["cmo", "custo marginal", "déficit", "ena", "energia afluente", "negativo", "p10", "p90", "geração", "balanço", "transmissão", "vertimento", "curtailment", "excesso"],
+      "doc_file": "docs/marginal-costs.md",
+      "tree_file": "decision-trees/marginal-costs.json",
+      "summary": "Diagnóstico de CMO, balanço de energia, ENA e risco de déficit"
+    },
+    {
+      "area": "execution_time",
+      "keywords": ["tempo", "backward", "forward", "cenário lento", "runtime", "subproblemas", "lento", "performance"],
+      "doc_file": "docs/execution-time.md",
+      "tree_file": null,
+      "summary": "Análise de performance computacional — sem sub-árvore dedicada, usar ferramentas genéricas"
+    }
+  ],
+
+  "fallback_procedure": [
+    "1. Se a pergunta não mapear claramente para uma área, verificar se menciona um arquivo CSV específico",
+    "2. Se menciona CSV, chamar df_get_columns para descobrir o conteúdo e então identificar a área",
+    "3. Se ainda ambíguo, usar df_get_summary com as colunas numéricas principais e inferir a área pelo tipo de dado",
+    "4. Para perguntas amplas ('analise o caso todo'), executar convergence.json → simulation.json → violations.json → marginal-costs.json em sequência"
+  ],
+
+  "always_start_with": {
+    "tool": "get_avaliable_results",
+    "reason": "Necessário para inicializar RESULTS_FOLDER e obter lista de CSVs disponíveis no caso"
+  }
+}

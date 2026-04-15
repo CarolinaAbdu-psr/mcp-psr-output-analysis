@@ -1,0 +1,256 @@
+{
+  "id": "marginal_costs",
+  "description": "Árvore de diagnóstico para CMO, balanço de energia, ENA e risco de déficit",
+  "doc_reference": "docs/marginal-costs.md",
+  "csv_reference": "docs/csv-schema.md#5-custo-marginal-de-operação-cmo",
+
+  "nodes": [
+    {
+      "id": "start",
+      "type": "action",
+      "description": "Obter estatísticas gerais do CMO — média, P10, P90 e mínimo",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"CMO_mean\": [\"mean\", \"min\", \"max\", \"std\"], \"CMO_P10\": [\"mean\", \"min\"], \"CMO_P90\": [\"mean\", \"max\"]}"
+      },
+      "note": "Adaptar nomes de colunas conforme df_get_columns. Procurar colunas com 'mean', 'P10', 'P90', 'marginal', 'cmo', 'spot'.",
+      "next_decision": "evaluate_cmo_sign"
+    },
+    {
+      "id": "evaluate_cmo_sign",
+      "type": "decision",
+      "description": "O CMO médio apresenta valores negativos?",
+      "branches": [
+        {
+          "condition": "CMO_mean min < 0 em qualquer etapa",
+          "label": "CMO_NEGATIVO",
+          "next": "check_negative_cmo_cause"
+        },
+        {
+          "condition": "CMO_mean >= 0 em todas as etapas",
+          "label": "CMO_POSITIVO",
+          "next": "check_p10_zero"
+        }
+      ]
+    },
+    {
+      "id": "check_negative_cmo_cause",
+      "type": "action",
+      "description": "CMO negativo detectado — verificar se há penalidade de vertimento/curtailment configurada",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"CMO_mean\": [\"min\", \"mean\"], \"CMO_P10\": [\"min\"]}"
+      },
+      "note": "CMO negativo sugere que penalidade de vertimento está tornando o consumo de energia 'benéfico'. Verificar também volume de curtailment se disponível.",
+      "next_decision": "evaluate_negative_depth"
+    },
+    {
+      "id": "evaluate_negative_depth",
+      "type": "decision",
+      "description": "Qual é a profundidade e extensão do CMO negativo?",
+      "branches": [
+        {
+          "condition": "CMO_mean min < -50 (fortemente negativo) OU presente em muitas etapas",
+          "label": "MUITO_NEGATIVO",
+          "next": "conclusion_strong_negative_cmo"
+        },
+        {
+          "condition": "CMO_mean min entre -50 e 0 (levemente negativo) OU em poucas etapas",
+          "label": "LEVEMENTE_NEGATIVO",
+          "next": "conclusion_mild_negative_cmo"
+        }
+      ]
+    },
+    {
+      "id": "check_p10_zero",
+      "type": "decision",
+      "description": "O P10 do CMO é igual a zero em alguma etapa?",
+      "branches": [
+        {
+          "condition": "CMO_P10 min = 0 OU CMO_P10 mean próximo de 0",
+          "label": "EXCESSO_OFERTA",
+          "next": "conclusion_supply_surplus"
+        },
+        {
+          "condition": "CMO_P10 > 0 em todas as etapas",
+          "label": "SEM_EXCESSO",
+          "next": "check_p90_volatility"
+        }
+      ]
+    },
+    {
+      "id": "check_p90_volatility",
+      "type": "action",
+      "description": "Verificar razão P90/Média para detectar alta volatilidade",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"CMO_P90\": [\"mean\", \"max\"], \"CMO_mean\": [\"mean\"]}"
+      },
+      "note": "Calcular CMO_P90_mean / CMO_mean_mean. Razão > 2× indica alta volatilidade sistêmica.",
+      "next_decision": "evaluate_volatility"
+    },
+    {
+      "id": "evaluate_volatility",
+      "type": "decision",
+      "description": "A volatilidade P90/Média é aceitável?",
+      "branches": [
+        {
+          "condition": "P90/Média < 2× — baixa volatilidade",
+          "label": "VOLATILIDADE_OK",
+          "next": "check_deficit_risk"
+        },
+        {
+          "condition": "P90/Média entre 2-5×",
+          "label": "VOLATILIDADE_MODERADA",
+          "next": "check_ena_correlation"
+        },
+        {
+          "condition": "P90/Média > 5×",
+          "label": "ALTA_VOLATILIDADE",
+          "next": "check_ena_correlation"
+        }
+      ]
+    },
+    {
+      "id": "check_ena_correlation",
+      "type": "action",
+      "description": "Alta volatilidade — correlacionar ENA com CMO para confirmar sensibilidade hídrica",
+      "tool": "df_cross_correlation",
+      "params": {
+        "col_a": "ENA_mean",
+        "col_b": "CMO_mean",
+        "join_on": "Stage"
+      },
+      "note": "Pearson r esperado próximo de -1 (mais ENA = menor CMO). Se |r| < 0.5, há outras fontes de incerteza.",
+      "next_decision": "evaluate_ena_correlation"
+    },
+    {
+      "id": "evaluate_ena_correlation",
+      "type": "decision",
+      "description": "A volatilidade do CMO é explicada pela variabilidade da ENA?",
+      "branches": [
+        {
+          "condition": "|Pearson r| > 0.7 — forte correlação negativa ENA/CMO",
+          "label": "EXPLICADO_POR_ENA",
+          "next": "conclusion_hydro_volatility"
+        },
+        {
+          "condition": "|Pearson r| < 0.5 — correlação fraca",
+          "label": "OUTRAS_CAUSAS",
+          "next": "conclusion_non_hydro_volatility"
+        }
+      ]
+    },
+    {
+      "id": "check_deficit_risk",
+      "type": "action",
+      "description": "Verificar risco de déficit — percentagem de cenários com falta de energia",
+      "tool": "df_get_summary",
+      "params": {
+        "operations_json": "{\"Deficit_mean\": [\"mean\", \"max\"], \"Deficit_frequency\": [\"mean\", \"max\"]}"
+      },
+      "note": "Se não houver coluna de frequência, verificar se Deficit_mean > 0 em alguma etapa",
+      "next_decision": "evaluate_deficit"
+    },
+    {
+      "id": "evaluate_deficit",
+      "type": "decision",
+      "description": "Qual é o nível de risco de déficit?",
+      "branches": [
+        {
+          "condition": "Deficit_frequency mean = 0% ou Deficit_mean = 0 em todas as etapas",
+          "label": "SEM_DEFICIT",
+          "next": "conclusion_no_deficit"
+        },
+        {
+          "condition": "Deficit_frequency mean entre 0-5%",
+          "label": "DEFICIT_BAIXO",
+          "next": "conclusion_low_deficit"
+        },
+        {
+          "condition": "Deficit_frequency mean entre 5-20%",
+          "label": "DEFICIT_MODERADO",
+          "next": "conclusion_moderate_deficit"
+        },
+        {
+          "condition": "Deficit_frequency mean > 20% OU max = 100%",
+          "label": "DEFICIT_ALTO",
+          "next": "conclusion_high_deficit"
+        }
+      ]
+    }
+  ],
+
+  "conclusions": [
+    {
+      "id": "conclusion_strong_negative_cmo",
+      "status": "CRITICO",
+      "title": "CMO fortemente negativo — penalidade de vertimento superestimada",
+      "message": "O CMO apresenta valores muito negativos em várias etapas. A penalidade por vertimento/curtailment está superestimada, criando um incentivo econômico excessivo para o consumo de energia.",
+      "recommendation": "1) Revisar o valor da penalidade de vertimento configurada. 2) Verificar o volume de energia rejeitada (curtailment). 3) Calibrar penalidade para refletir o custo real do vertimento.",
+      "doc_section": "docs/marginal-costs.md#cmo-negativo"
+    },
+    {
+      "id": "conclusion_mild_negative_cmo",
+      "status": "ALERTA",
+      "title": "CMO levemente negativo em algumas etapas",
+      "message": "O CMO apresenta valores levemente negativos em poucas etapas. Pode ser causado por excesso pontual de renováveis com penalidade de vertimento.",
+      "recommendation": "Verificar se as etapas com CMO negativo correspondem a períodos úmidos com alta geração renovável. Revisar penalidade de vertimento.",
+      "doc_section": "docs/marginal-costs.md#cmo-negativo"
+    },
+    {
+      "id": "conclusion_supply_surplus",
+      "status": "INFORMATIVO",
+      "title": "Excesso de oferta em ≥10% dos cenários",
+      "message": "O P10 do CMO é zero, indicando que em pelo menos 10% dos cenários o sistema tem energia excedente sem custo variável. Típico de períodos úmidos com alta geração hidro/renovável.",
+      "recommendation": "Verificar se coincide com alta ENA. Se persistente, avaliar oportunidades de exportação ou armazenamento.",
+      "doc_section": "docs/marginal-costs.md#análise-de-risco--distribuição-estocástica-percentis"
+    },
+    {
+      "id": "conclusion_hydro_volatility",
+      "status": "ALERTA",
+      "title": "Alta volatilidade de CMO explicada pela variabilidade hídrica",
+      "message": "O sistema apresenta forte dependência da hidrologia — em anos secos o CMO dispara, em anos úmidos cai acentuadamente. Correlação ENA/CMO confirma essa sensibilidade.",
+      "recommendation": "Considerar: 1) Diversificação da matriz com fontes não-hídricas. 2) Contratos de longo prazo para reduzir exposição ao spot. 3) Análise de segurança no P90.",
+      "doc_section": "docs/marginal-costs.md#análise-de-risco--distribuição-estocástica-percentis"
+    },
+    {
+      "id": "conclusion_non_hydro_volatility",
+      "status": "ALERTA",
+      "title": "Alta volatilidade de CMO com causas não-hídricas",
+      "message": "A volatilidade do CMO não é explicada pela ENA (correlação fraca). Há outras fontes de incerteza no sistema além da hidrologia.",
+      "recommendation": "Investigar: 1) Variabilidade de preços de combustível. 2) Restrições de transmissão intermitentes. 3) Disponibilidade de usinas com variáveis binárias.",
+      "doc_section": "docs/marginal-costs.md#análise-de-risco--distribuição-estocástica-percentis"
+    },
+    {
+      "id": "conclusion_no_deficit",
+      "status": "OK",
+      "title": "Sem risco de déficit",
+      "message": "Nenhum cenário apresentou falta de energia. O sistema atende à demanda em todos os cenários simulados.",
+      "recommendation": "Nenhuma ação necessária. Sistema com boa segurança de suprimento."
+    },
+    {
+      "id": "conclusion_low_deficit",
+      "status": "INFORMATIVO",
+      "title": "Risco de déficit baixo (< 5%)",
+      "message": "Déficit ocorre apenas em cenários muito extremos (< 5% dos casos). Nível considerado aceitável em muitos sistemas.",
+      "recommendation": "Monitorar se a frequência aumenta com novas simulações. Verificar se os cenários com déficit correspondem a hidrologias extremas."
+    },
+    {
+      "id": "conclusion_moderate_deficit",
+      "status": "ALERTA",
+      "title": "Risco de déficit moderado (5–20%)",
+      "message": "Em 5 a 20% dos cenários houve falta de energia em pelo menos uma etapa. Nível de risco que merece atenção.",
+      "recommendation": "1) Identificar etapas e submercados com maior frequência de déficit. 2) Verificar se há gargalos de transmissão. 3) Avaliar expansão da capacidade.",
+      "doc_section": "docs/marginal-costs.md#risco-de-déficit"
+    },
+    {
+      "id": "conclusion_high_deficit",
+      "status": "CRITICO",
+      "title": "Risco de déficit alto (> 20%)",
+      "message": "Mais de 20% dos cenários apresentaram déficit. Se frequência = 100%, em absolutamente todos os cenários houve falta de energia em alguma etapa — situação crítica.",
+      "recommendation": "1) Urgente: identificar etapas críticas e submercados afetados. 2) Verificar equação de balanço: Geração + Déficit = Demanda. 3) Checar gargalos de transmissão. 4) Avaliar expansão imediata de capacidade.",
+      "doc_section": "docs/marginal-costs.md#risco-de-déficit"
+    }
+  ]
+}
