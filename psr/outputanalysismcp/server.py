@@ -10,6 +10,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from .case_information import extract_case_information as _extract_case_info
 from .common import read_csv, read_csv_path
 from .dataframe_functions import (
     get_column_names,
@@ -29,8 +30,8 @@ from .dataframe_functions import (
 # ---------------------------------------------------------------------------
 
 _PACKAGE_ROOT = Path(__file__).parents[2]
-KNOWLEDGE_DIR = _PACKAGE_ROOT / "sddp_knowledge"
-_SKILLS_DIR   = _PACKAGE_ROOT / "sddp-output-skills"
+KNOWLEDGE_DIR = _PACKAGE_ROOT / "sddp_knowledge"   # legacy — may not exist
+_SKILLS_DIR   = _PACKAGE_ROOT / "skills"
 
 # Import HTML-to-CSV extractor from the project root
 sys.path.insert(0, str(_PACKAGE_ROOT))
@@ -56,23 +57,22 @@ mcp = FastMCP(
         "## Standard workflow "
         "0. extract_html_results(study_path) — parse the SDDP dashboard HTML and export all "
         "   charts as CSV files into the results/ folder. Call ONCE per session before anything else. "
+        "0b. get_case_information(study_path) — extract case metadata (stages, horizon, series, "
+        "    model version, dimensions) from the HTML. Call alongside step 0 to provide context. "
         "1. get_avaliable_results(study_path) — set the results folder and see available CSVs. "
-        "2. Convergence: use df_* tools on the convergence CSV, then policy-vs-simulation CSV. "
-        "3. Cost: use df_* tools on the simulation cost CSV (80% rule, dispersion, penalties). "
-        "4. Performance: use df_* tools on the execution time CSV. "
-        "5. Knowledge: call get_sddp_knowledge(topics, problems) whenever a diagnosis needs "
-        "   theoretical grounding. Always embed the relevant knowledge in your answer with references. "
-        "6. Output: follow sddp_output_format rules — match user language, use tables/charts, "
-        "   cite knowledge base entries with their reference links. "
+        "2. get_workflow_doc(doc_name) — load technical documentation for the diagnostic area "
+        "   (index, convergence, simulation, violations, marginal-costs, execution-time, csv-schema). "
+        "3. get_decision_tree(area) — load the decision tree JSON to drive the diagnostic sequence. "
+        "4. df_* tools — execute the analysis following decision tree nodes. "
+        "5. get_sddp_knowledge(topics, problems) — retrieve theoretical grounding when needed. "
 
         "## Rules "
-        "- Call extract_html_results before get_avaliable_results on a fresh session. "
+        "- Call extract_html_results + get_case_information before get_avaliable_results. "
         "- Always call get_avaliable_results before any df_* analysis tool. "
+        "- Use get_workflow_doc('index') to route user questions to the right area and tree. "
         "- Respond in the user's language — not in English unless the user wrote in English. "
         "- Lead with conclusions; use tables for per-stage data. "
-        "- Always cite the knowledge base entry (id + reference URL) when explaining a diagnosis. "
-        "- See skill prompts (sddp_analyze, sddp_convergence, sddp_costs, sddp_performance, "
-        "  sddp_output_format) for detailed step-by-step guidance. "
+        "- See the sddp_diagnose prompt for detailed step-by-step guidance. "
     ),
 )
 
@@ -186,112 +186,159 @@ def get_avaliable_results(study_path: str) -> list[str]:
     return [f.name for f in RESULTS_FOLDER.iterdir() if f.is_file()]
 
 
-# ---------------------------------------------------------------------------
-# SDDP Knowledge base
-# ---------------------------------------------------------------------------
-
-_KNOWLEDGE_FILES = ["policy.json", "simulation.json", "execution_time.json"]
-
-
 @mcp.tool()
-def list_sddp_knowledge() -> str:
+def get_case_information(study_path: str) -> str:
     """
-    List every entry in the SDDP knowledge base (id, topic, title, related_problems).
+    Extract structured case metadata from the SDDP dashboard HTML.
 
-    Call once to discover what theory is available before calling
-    get_sddp_knowledge(). Do NOT call on every turn.
+    Parses the "Information" tab (Información / Information / Informação) and
+    returns case summary, model/environment info, run parameters, system
+    dimensions, and non-convexity counts.
 
-    Returns a catalogue of all entries grouped by JSON file.
-    """
-    lines = ["=== SDDP KNOWLEDGE BASE CATALOGUE ===", ""]
-    for fname in _KNOWLEDGE_FILES:
-        path = KNOWLEDGE_DIR / fname
-        try:
-            entries = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            lines += [f"## {fname}", f"  [Error: {exc}]", ""]
-            continue
-
-        lines.append(f"## {fname}")
-        for e in entries:
-            related = ", ".join(e.get("related_problems", [])) or "—"
-            lines += [
-                f"  id       : {e['id']}",
-                f"  topic    : {e.get('topic', '')}",
-                f"  title    : {e.get('title', '')}",
-                f"  problems : {related}",
-                "",
-            ]
-    return "\n".join(lines)
-
-
-@mcp.tool()
-def get_sddp_knowledge(
-    ids: list[str] | None = None,
-    topics: list[str] | None = None,
-    problems: list[str] | None = None,
-) -> str:
-    """
-    Retrieve the full content of SDDP knowledge entries.
-
-    Filters across all knowledge files and returns every entry that matches
-    ANY of the given ids, topic strings, OR related_problem strings.
-    Pass only the tags you need — do not request the entire knowledge base.
+    Call this once per session — before or alongside get_avaliable_results —
+    to give the analysis context (stages, series, horizon, model version, etc.).
 
     Args:
-        ids:      List of exact entry ids (e.g. ["sddp_convergence_theory"]).
-        topics:   List of topic strings to match (e.g. ["convergence"]).
-        problems: List of related_problem strings
-                  (e.g. ["high_penalty_costs", "mip_complexity"]).
+        study_path: Absolute path to the SDDP case folder that contains the
+                    dashboard .html file.
 
-    Returns a formatted text block ready to embed in a response.
+    Returns:
+        Formatted text block with all case metadata sections.
     """
-    ids_set      = set(ids or [])
-    topics_set   = set(topics or [])
-    problems_set = set(problems or [])
+    study = Path(study_path)
+    html_files = list(study.glob("*.html"))
+    if not html_files:
+        return "[Error] No HTML file found in the study folder."
 
-    if not ids_set and not topics_set and not problems_set:
-        return "[Error] Provide at least one of: ids, topics, or problems."
+    # Use first HTML found (there is normally only one)
+    data = _extract_case_info(str(html_files[0]))
 
-    lines: list[str] = []
-    found = 0
+    if "error" in data:
+        return f"[Error] {data['error']}"
 
-    for fname in _KNOWLEDGE_FILES:
-        path = KNOWLEDGE_DIR / fname
-        try:
-            entries = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+    lines: list[str] = [
+        f"=== CASE INFORMATION — {html_files[0].name} ===",
+        "",
+    ]
+
+    section_order = [
+        ("case_summary",    "Case Summary"),
+        ("model_info",      "Model & Environment"),
+        ("case_title",      "Case Title"),
+        ("run_parameters",  "Run Parameters"),
+        ("dimensions",      "System Dimensions"),
+        ("non_convexities", "Non-Convexities"),
+    ]
+
+    for key, label in section_order:
+        value = data.get(key)
+        if value is None:
             continue
+        lines.append(f"## {label}")
+        if isinstance(value, str):
+            lines.append(f"  {value}")
+        elif isinstance(value, dict):
+            col_w = max((len(k) for k in value), default=0)
+            for k, v in value.items():
+                lines.append(f"  {k.ljust(col_w)}  {v}")
+        lines.append("")
 
-        for e in entries:
-            match = (
-                e.get("id") in ids_set
-                or e.get("topic") in topics_set
-                or bool(set(e.get("related_problems", [])) & problems_set)
-            )
-            if not match:
-                continue
-
-            found += 1
-            refs = "\n".join(
-                f"  - {r['title']} ({r['url']})"
-                for r in e.get("references", [])
-            )
-            lines += [
-                f"### {e['title']}",
-                f"id: {e['id']}  |  topic: {e.get('topic', '')}",
-                "",
-                e["content"],
-                "",
-            ]
-            if refs:
-                lines += ["**References:**", refs, ""]
-            lines.append("---")
-
-    if found == 0:
-        return "[No knowledge entries matched the provided ids / topics / problems.]"
+    # Any extra keys not in the standard list
+    known = {k for k, _ in section_order} | {"_tab_id"}
+    for key, value in data.items():
+        if key not in known:
+            label = key.replace("_", " ").title()
+            lines.append(f"## {label}")
+            if isinstance(value, dict):
+                col_w = max((len(k) for k in value), default=0)
+                for k, v in value.items():
+                    lines.append(f"  {k.ljust(col_w)}  {v}")
+            else:
+                lines.append(f"  {value}")
+            lines.append("")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Workflow documentation & decision trees
+# ---------------------------------------------------------------------------
+
+_DOCS_DIR  = _PACKAGE_ROOT / "docs"
+_TREES_DIR = _PACKAGE_ROOT / "decision-trees"
+
+_VALID_DOCS = {
+    "index", "convergence", "simulation", "violations",
+    "marginal-costs", "execution-time", "csv-schema",
+}
+
+_VALID_TREES = {
+    "master", "convergence", "simulation", "violations", "marginal-costs",
+}
+
+
+@mcp.tool()
+def get_workflow_doc(doc_name: str) -> str:
+    """
+    Load a technical documentation file for the SDDP diagnostic workflow.
+
+    Available documents:
+        index          – keyword-to-area lookup table (read first for routing)
+        convergence    – Zinf/Zsup theory, Benders gaps, non-convergence causes
+        simulation     – 80% rule, MIP solver status, P10/P90 cost dispersion
+        violations     – hard/soft constraints, penalty calibration
+        marginal-costs – CMO, negative prices, ENA, deficit risk
+        execution-time – forward/backward timing, performance patterns
+        csv-schema     – maps SDDP CSV file names to expected columns
+
+    Call get_workflow_doc('index') first to identify which document and
+    decision tree apply to the user's question.
+
+    Args:
+        doc_name: One of the document names listed above (without .md).
+    """
+    if doc_name not in _VALID_DOCS:
+        available = ", ".join(sorted(_VALID_DOCS))
+        return f"[Error] Unknown doc '{doc_name}'. Available: {available}"
+
+    path = _DOCS_DIR / f"{doc_name}.md"
+    if not path.exists():
+        return f"[Error] Documentation file not found: {path}"
+
+    return path.read_text(encoding="utf-8")
+
+
+@mcp.tool()
+def get_decision_tree(area: str) -> str:
+    """
+    Load a diagnostic decision tree JSON for a specific SDDP analysis area.
+
+    Available trees:
+        master         – entry point: routes a question to the correct sub-tree
+        convergence    – diagnose Zinf/Zsup convergence quality
+        simulation     – diagnose simulation cost health and MIP solver status
+        violations     – diagnose constraint violations and penalty calibration
+        marginal-costs – diagnose CMO, ENA correlation, and deficit risk
+
+    Workflow:
+        1. Call get_decision_tree('master') to identify the right area.
+        2. Call get_decision_tree('<area>') to load the step-by-step tree.
+        3. Follow each node: read description → call the tool in 'tool' field
+           with its 'params' → evaluate result against 'branches' → follow the
+           matching branch to the next node or a 'conclusion' node.
+
+    Args:
+        area: One of: master, convergence, simulation, violations, marginal-costs.
+    """
+    if area not in _VALID_TREES:
+        available = ", ".join(sorted(_VALID_TREES))
+        return f"[Error] Unknown tree '{area}'. Available: {available}"
+
+    path = _TREES_DIR / f"{area}.json"
+    if not path.exists():
+        return f"[Error] Decision tree file not found: {path}"
+
+    return path.read_text(encoding="utf-8")
 
 
 
@@ -744,56 +791,27 @@ def df_filter_above_threshold(
 # ---------------------------------------------------------------------------
 
 @mcp.prompt()
-def sddp_analyze(study_path: str) -> str:
+def sddp_diagnose(study_path: str, question: str = "") -> str:
     """
-    Complete SDDP output analysis: convergence, policy vs simulation,
-    cost health, cost dispersion + ENA correlation, penalty participation,
-    and execution time. Pass the path to the SDDP case folder.
-    """
-    skill = _load_skill("sddp-analyze")
-    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
+    Full SDDP diagnostic workflow: load the step-by-step skill prompt that
+    drives convergence, simulation, violation, and marginal-cost analysis.
 
+    The skill instructs the agent to:
+      1. Initialize results and extract case metadata
+      2. Route the question to the right diagnostic area
+      3. Load technical documentation for that area
+      4. Load and follow the decision tree
+      5. Synthesize a structured diagnosis with data, causes, and recommendations
 
-@mcp.prompt()
-def sddp_convergence(study_path: str) -> str:
+    Args:
+        study_path: Absolute path to the SDDP case folder.
+        question:   User's diagnostic question (optional — defaults to full analysis).
     """
-    Check SDDP policy convergence and validate the final simulation
-    against the policy confidence band. Pass the SDDP case folder path.
-    """
-    skill = _load_skill("sddp-convergence")
-    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
-
-
-@mcp.prompt()
-def sddp_costs(study_path: str) -> str:
-    """
-    Deep-dive into SDDP simulation costs: 80% health check, P10-P90
-    dispersion with ENA elasticity, and penalty participation by scenario.
-    Pass the SDDP case folder path.
-    """
-    skill = _load_skill("sddp-costs")
-    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
-
-
-@mcp.prompt()
-def sddp_performance(study_path: str) -> str:
-    """
-    Analyse SDDP computational performance: iteration time growth,
-    Forward/Backward balance, and stage-level timing hot-spots.
-    Pass the SDDP case folder path.
-    """
-    skill = _load_skill("sddp-performance")
-    return f"{skill}\n\n---\nCase path provided by user: `{study_path}`"
-
-
-@mcp.prompt()
-def sddp_output_format() -> str:
-    """
-    Load the output formatting rules for all SDDP analysis responses.
-    These rules govern language matching, visualization style, and
-    knowledge-base citation format. Apply to every analysis response.
-    """
-    return _load_skill("sddp-output-format")
+    skill = _load_skill("sddp-diagnose")
+    parts = [skill, "", "---", f"Case path: `{study_path}`"]
+    if question:
+        parts.append(f"Question: {question}")
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
