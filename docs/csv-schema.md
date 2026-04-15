@@ -2,7 +2,7 @@
 
 Este documento mapeia os conceitos diagnósticos do SDDP para os arquivos CSV típicos e suas colunas.
 
-> **Como usar:** Ao receber a lista de arquivos de `get_avaliable_results`, compare com os padrões abaixo para identificar qual CSV corresponde a cada análise. Se houver dúvida, use `df_get_columns(file_path)` para inspecionar.
+> **Como usar:** Ao receber a lista de arquivos de `get_avaliable_results`, compare com os padrões abaixo para identificar qual CSV corresponde a cada análise. Se houver dúvida, use `df_get_columns(file_path)` para inspecionar. A unidade dos valores estão representadas no final do nome do arquivo. 
 
 ---
 

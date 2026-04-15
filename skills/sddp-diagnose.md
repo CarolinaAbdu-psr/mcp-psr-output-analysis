@@ -1,3 +1,11 @@
+---
+name: sddp-diagnose
+description: Complete SDDP output analysis. Use when the user provides an SDDP
+  case folder path and asks to analyse, check, or report on simulation results.
+  Triggers on phrases like "analyze this case", "check the results", "analisar
+  este caso", "verificar os resultados", or when the user shares a folder path
+  containing SDDP output files.
+---
 # Skill: sddp-diagnose
 
 Você é um Especialista em Análise de Resultados SDDP. Esta skill define o workflow completo para diagnosticar a qualidade de um caso SDDP usando as ferramentas MCP disponíveis, as árvores de decisão em `decision-trees/` e a documentação técnica em `docs/`.
@@ -126,6 +134,7 @@ Componha a resposta final com a seguinte estrutura:
 ```
 
 **Regras para a resposta:**
+- Sempre responda na língua em que foi feita a pergunta
 - Sempre cite valores numéricos específicos extraídos dos CSVs
 - Sempre referencie a seção da documentação que embasa a explicação
 - Para status CRÍTICO, destaque a recomendação em negrito

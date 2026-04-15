@@ -65,6 +65,8 @@ Este gráfico compara o valor esperado da função objetivo da **última iteraç
 | **Política incompleta** | FCF não convergiu → sinais de custo imprecisos | Resolver a não-convergência primeiro |
 | **Não-convexidade (MIP)** | Variáveis binárias em simulação horária criam descontinuidades | Ativar: Configuração → Estratégia de Solução → Não-Convexidade da Política |
 | **Discrepância de amostragem** | FCF copiada de outro caso sem cobrir cenários extremos usados na simulação | Regenerar política com os mesmos cenários da simulação |
+| **Esatado da solução horária não é ótimo** | Caso o estado da solução horária seja diferente de solução ótima, pode haver deslocamentos entre a simulação e a 
+política | Aumentar o tempo de solução para o MIP | 
 
 ---
 

@@ -51,31 +51,125 @@ def _ms_to_date(ms: float, domain: str) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def _build_x_axis(data: list, point_start, domain: str) -> list:
+def _as_str(value) -> str:
+    """Garante que um valor lido do JSON seja uma string simples."""
+    if isinstance(value, list):
+        return value[0] if value else ""
+    return str(value) if value is not None else ""
+
+
+def _find_title_from_html(content: str, container_id: str) -> str:
+    """
+    Fallback: localiza o <h2> mais próximo do <div id="container_id"> no HTML.
+
+    Útil quando o título passado ao PSRPlot está vazio ("").
+    """
+    id_match = re.search(rf'id="{re.escape(container_id)}"', content)
+    if not id_match:
+        return ""
+    h2_match = re.search(r'<h2[^>]*>(.*?)</h2>', content[id_match.end():],
+                         re.IGNORECASE | re.DOTALL)
+    if not h2_match:
+        return ""
+    return re.sub(r'<[^>]+>', '', h2_match.group(1)).strip()
+
+
+def _extract_push_layers(content: str) -> list[tuple[str, str]]:
+    """
+    Extrai todos os pares (var_name, json_str) de chamadas push_layers,
+    suportando JSON em linha única *e* multi-linha.
+
+    Estratégia: ao encontrar `varName.push_layers(`, usa contador de colchetes
+    para localizar o `]` de fechamento correto, ignorando colchetes dentro de
+    strings JSON.
+    """
+    results: list[tuple[str, str]] = []
+    pattern = re.compile(r'(\w+)\.push_layers\(')
+
+    i = 0
+    while True:
+        m = pattern.search(content, i)
+        if not m:
+            break
+        var_name = m.group(1)
+        pos = m.end()          # posição logo após o '(' de abertura
+
+        # Percorrer caractere a caractere para balancear colchetes,
+        # ignorando conteúdo dentro de strings JSON (aspas duplas).
+        depth = 0
+        in_string = False
+        escape_next = False
+        start = pos
+        j = pos
+        while j < len(content):
+            ch = content[j]
+            if escape_next:
+                escape_next = False
+            elif ch == '\\' and in_string:
+                escape_next = True
+            elif ch == '"':
+                in_string = not in_string
+            elif not in_string:
+                if ch == '[':
+                    depth += 1
+                elif ch == ']':
+                    depth -= 1
+                    if depth == 0:
+                        json_str = content[start:j + 1]
+                        results.append((var_name, json_str))
+                        i = j + 1
+                        break
+            j += 1
+        else:
+            # Não encontrou fechamento — avança para não entrar em loop infinito
+            i = m.end()
+
+    return results
+
+
+def _has_embedded_x(data: list, series_type: str) -> bool:
+    """
+    Determina se o eixo X está embutido nos dados.
+
+    Regras:
+      - area_range: x embutido quando cada row tem 3 elementos [x, low, high]
+                    sem x quando cada row tem 2 elementos [low, high]
+      - outros tipos: x embutido quando cada row é uma lista [x, y]
+                      sem x quando os elementos são escalares
+    """
+    if not data or not isinstance(data[0], list):
+        return False
+    if series_type == "area_range":
+        return len(data[0]) == 3   # [x, low, high]
+    return len(data[0]) >= 2       # [x, y]
+
+
+def _build_x_axis(data: list, point_start, domain: str, has_x: bool) -> list:
     """
     Constrói o eixo X de uma série.
 
-    Formatos possíveis de `data`:
-      - [[x, y], ...]       → x explícito
-      - [[x, y1, y2], ...]  → x explícito (area_range)
-      - [v1, v2, ...]       → x derivado de pointStart
+    Formatos suportados de `data`:
+      - [[x, y], ...]        → x explícito (line/column)
+      - [[x, low, high], ...]→ x explícito (area_range)
+      - [[low, high], ...]   → sem x (area_range via pointStart)
+      - [v, v, ...]          → sem x (escalares via pointStart)
     """
-    use_timestamps = _is_timestamp(point_start) or domain == "year"
-
-    # Dados com x embutido
-    if data and isinstance(data[0], list):
+    if has_x:
         xs = [row[0] for row in data]
-        if use_timestamps:
+        if _is_timestamp(xs[0]):
             return [_ms_to_date(x, domain) for x in xs]
         return xs
 
-    # Dados escalares — gerar x a partir de pointStart
+    # Sem x — gerar a partir de pointStart
     n = len(data)
-    if use_timestamps:
+    if _is_timestamp(point_start):
         start_dt = datetime.fromtimestamp(point_start / 1000, tz=timezone.utc)
         if domain == "year":
             return [str(start_dt.year + i) for i in range(n)]
-        # Para outros domínios temporais, incrementar por mês
+        if domain == "week":
+            from datetime import timedelta
+            return [(start_dt + timedelta(weeks=i)).strftime("%Y-%m-%d") for i in range(n)]
+        # month e outros domínios temporais — incrementar mês a mês
         results = []
         for i in range(n):
             total_months = start_dt.month - 1 + i
@@ -88,22 +182,33 @@ def _build_x_axis(data: list, point_start, domain: str) -> list:
     return list(range(start, start + n))
 
 
-def _extract_y_columns(data: list, series_type: str, name: str) -> dict:
+def _extract_y_columns(data: list, series_type: str, name: str, has_x: bool) -> dict:
     """
     Retorna um dicionário {nome_coluna: [valores]}.
 
     - line / column / etc. → {name: [y]}
-    - area_range           → {name + " low": [y1], name + " high": [y2]}
+    - area_range           → {name + " low": [low], name + " high": [high]}
+
+    O parâmetro `has_x` indica se o primeiro elemento de cada row é o eixo X.
     """
     if not data:
         return {}
 
-    if isinstance(data[0], list):
-        if series_type == "area_range":
+    if series_type == "area_range":
+        if has_x:
+            # [x, low, high]
             return {
                 f"{name} low":  [row[1] for row in data],
                 f"{name} high": [row[2] for row in data],
             }
+        if isinstance(data[0], list):
+            # [low, high] sem x
+            return {
+                f"{name} low":  [row[0] for row in data],
+                f"{name} high": [row[1] for row in data],
+            }
+
+    if has_x:
         return {name: [row[1] for row in data]}
 
     # Dados escalares
@@ -135,35 +240,33 @@ def extract_charts(html_path: str) -> list[dict]:
     """
     content = Path(html_path).read_text(encoding="utf-8", errors="replace")
 
-    # Padrão: const varName = new PSRPlot("id", "Título", "");
+    # Padrão: const varName = new PSRPlot("container_id", "Título", "subtitle");
     plot_re = re.compile(
         r'const\s+(\w+)\s*=\s*new PSRPlot\("([^"]+)",\s*"([^"]*)",\s*"([^"]*)"\);'
     )
-    # Padrão: varName.push_layers([...]);  — cada chamada está em uma única linha
-    layers_re = re.compile(r'(\w+)\.push_layers\((\[.+\])\);')
 
-    # 1. Mapear varName → metadados do gráfico
+    # 1. Mapear varName → metadados do gráfico (guarda container_id para fallback de título)
     plots: dict[str, dict] = {}
     for m in plot_re.finditer(content):
-        var_name, _container_id, title, _subtitle = m.groups()
-        plots[var_name] = {"title": title, "layers": []}
+        var_name, container_id, title, _subtitle = m.groups()
+        plots[var_name] = {"title": title, "container_id": container_id, "layers": []}
 
-    # 2. Associar layers aos gráficos
-    for m in layers_re.finditer(content):
-        var_name, layers_json = m.groups()
+    # 2. Associar layers aos gráficos (suporta JSON em linha única e multi-linha)
+    for var_name, layers_json in _extract_push_layers(content):
         if var_name not in plots:
             continue
         try:
             layers = json.loads(layers_json)
             plots[var_name]["layers"].extend(layers)
         except json.JSONDecodeError:
-            # Linha malformada — ignorar silenciosamente
+            # JSON malformado — ignorar silenciosamente
             pass
 
     # 3. Construir DataFrames
     charts = []
     for plot_info in plots.values():
-        title = plot_info["title"]
+        # Fallback: se o título do PSRPlot está vazio, busca o <h2> próximo ao container
+        title = plot_info["title"] or _find_title_from_html(content, plot_info["container_id"])
         layers = plot_info["layers"]
         if not layers:
             continue
@@ -179,17 +282,18 @@ def extract_charts(html_path: str) -> list[dict]:
             series_type = layer.get("type", "line")
             domain      = layer.get("domain", "linear")
             point_start = layer.get("pointStart", 1)
-            x_unit      = layer.get("xUnit", x_unit)
-            y_unit      = layer.get("yUnit", y_unit)
+            x_unit      = _as_str(layer.get("xUnit", x_unit))
+            y_unit      = _as_str(layer.get("yUnit", y_unit))
 
             if not data:
                 continue
 
-            xs = _build_x_axis(data, point_start, domain)
+            has_x = _has_embedded_x(data, series_type)
+            xs = _build_x_axis(data, point_start, domain, has_x)
             if x_index is None:
                 x_index = xs
 
-            y_cols = _extract_y_columns(data, series_type, name)
+            y_cols = _extract_y_columns(data, series_type, name, has_x)
             series.update(y_cols)
 
         if not series or x_index is None:
@@ -241,7 +345,7 @@ def export_to_csv(
     saved = []
 
     for chart in charts:
-        filename = _sanitize_filename(chart["title"]) + ".csv"
+        filename = _sanitize_filename(chart["title"]+"_"+chart["y_unit"]) + ".csv"
         out_path = output_dir / filename
         chart["df"].to_csv(out_path, encoding="utf-8-sig")  # utf-8-sig → abre bem no Excel
         saved.append(str(out_path))

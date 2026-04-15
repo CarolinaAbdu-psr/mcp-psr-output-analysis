@@ -67,9 +67,97 @@
         {
           "condition": "Zinf_max está FORA do IC de Zsup",
           "label": "DIVERGENCIA_POLITICA_SIM",
+          "next": "check_non_convexity",
+          "dig_deeper": true
+        }
+      ]
+    },
+    {
+      "id": "check_non_convexity",
+      "type": "action",
+      "description": "Divergência política/simulação — verificar se o caso possui variáveis binárias (não-convexidades)",
+      "tool": "get_case_information",
+      "params": {},
+      "note": "Consultar 'non_convexities' e 'run_parameters' no resultado. Se qualquer tipo de não-convexidade tiver contagem > 0, o caso possui variáveis binárias. Verificar também se o horizonte é horário via run_parameters.",
+      "next_decision": "evaluate_non_convexity"
+    },
+    {
+      "id": "evaluate_non_convexity",
+      "type": "decision",
+      "description": "O caso possui variáveis binárias (não-convexidades)?",
+      "branches": [
+        {
+          "condition": "non_convexities contém pelo menos um tipo com contagem > 0",
+          "label": "TEM_NAO_CONVEXIDADE",
+          "next": "check_mip_heatmap"
+        },
+        {
+          "condition": "non_convexities todas zeradas OU ausente no resultado",
+          "label": "SEM_NAO_CONVEXIDADE",
+          "next": "check_mip_heatmap"
+        }
+      ]
+    },
+    {
+      "id": "check_mip_heatmap",
+      "type": "action",
+      "description": "Caso com variáveis binárias — verificar estado das soluções MIP por etapa e cenário no heatmap",
+      "tool": "df_analyze_heatmap",
+      "params": {
+        "value_col": "Solve_Status",
+        "row_col": "Stage",
+        "col_col": "Scenario"
+      },
+      "note": "Aplicável somente se o caso for horário (confirmar via run_parameters do nó anterior). Valores diferentes de 'Optimal' indicam soluções sub-ótimas ou falhas. Se o CSV de status MIP não existir, registrar ausência e ir para conclusion_non_convexity_config.",
+      "next_decision": "evaluate_mip_heatmap"
+    },
+    {
+      "id": "evaluate_mip_heatmap",
+      "type": "decision",
+      "description": "O heatmap de status MIP revela soluções não-ótimas?",
+      "branches": [
+        {
+          "condition": "Heatmap mostra apenas 'Optimal' em todas as etapas/cenários OU CSV de status MIP inexistente",
+          "label": "MIP_OTIMO",
+          "next": "conclusion_non_convexity_config"
+        },
+        {
+          "condition": "Heatmap mostra presença de 'Feasible' ou 'Relaxed' em alguma etapa/cenário (> 0% das células)",
+          "label": "MIP_SUBOTIMO",
+          "next": "conclusion_non_convexity_mip_suboptimal"
+        },
+        {
+          "condition": "Heatmap mostra presença de 'Error' em qualquer etapa/cenário",
+          "label": "MIP_ERRO",
+          "next": "conclusion_non_convexity_mip_error"
+        }
+      ]
+    },
+    {
+      "id": "evaluate_combined_findings",
+      "type": "decision",
+      "description": "Combinar achados de não-convexidade (passo 1) e status MIP (passo 2) para determinar a causa da divergência",
+      "branches": [
+        {
+          "condition": "non_convexities zeradas OU ausentes — sem variáveis binárias",
+          "label": "SEM_NAO_CONVEXIDADE",
           "next": "conclusion_policy_sim_gap",
-          "dig_deeper": true,
-          "additional_check": "Verificar se simulação usa variáveis binárias (não-convexidade) ou cenários externos não cobertos pela política"
+          "note": "Divergência provavelmente causada por FCF copiada de outro caso com cenários diferentes"
+        },
+        {
+          "condition": "non_convexities > 0 E heatmap mostra apenas 'Optimal' (ou CSV de MIP inexistente / caso não-horário)",
+          "label": "BINARIAS_MIP_OTIMO",
+          "next": "conclusion_non_convexity_config"
+        },
+        {
+          "condition": "non_convexities > 0 E heatmap mostra presença de 'Feasible' ou 'Relaxed' em alguma célula",
+          "label": "BINARIAS_MIP_SUBOTIMO",
+          "next": "conclusion_non_convexity_mip_suboptimal"
+        },
+        {
+          "condition": "non_convexities > 0 E heatmap mostra presença de 'Error' em qualquer etapa/cenário",
+          "label": "BINARIAS_MIP_ERRO",
+          "next": "conclusion_non_convexity_mip_error"
         }
       ]
     },
@@ -176,6 +264,32 @@
       "message": "O Zinf parou de evoluir e as penalidades estão em nível aceitável. A causa provável é um número insuficiente de cenários na fase forward, limitando a exploração do espaço de estados.",
       "recommendation": "Aumentar o número de séries de forward para melhorar a cobertura do espaço de estados.",
       "doc_section": "docs/convergence.md#causa-3--amostra-insuficiente-de-forward"
+    },
+    {
+      "id": "conclusion_non_convexity_config",
+      "status": "ALERTA",
+      "title": "Não-convexidade presente — ativar opção de política não-convexa",
+      "message": "O caso possui variáveis binárias e as soluções MIP são ótimas, mas a simulação divergiu da política. A FCF foi construída com relaxação convexa e não representa corretamente a operação com despacho unitário.",
+      "recommendation": "Ativar a opção 'Não-Convexidade da Política' (Non-Convex Policy) nas configurações do caso e re-executar.",
+      "doc_section": "docs/convergence.md#política-vs-simulação-final"
+    },
+    {
+      "id": "conclusion_non_convexity_mip_suboptimal",
+      "status": "CRITICO",
+      "title": "Não-convexidade com soluções MIP sub-ótimas",
+      "message": "O caso possui variáveis binárias e foram detectadas soluções Feasible ou Relaxed no heatmap de status MIP. A divergência política/simulação é agravada pela sub-otimalidade das soluções horárias.",
+      "recommendation": "1) Ativar a opção 'Não-Convexidade da Política'. 2) Aumentar o tempo de solução do MIP. 3) Reduzir a duração das sub-etapas de 168h para 24h.",
+      "doc_section": "docs/convergence.md#política-vs-simulação-final",
+      "next_tree": "decision-trees/simulation.json"
+    },
+    {
+      "id": "conclusion_non_convexity_mip_error",
+      "status": "CRITICO",
+      "title": "Não-convexidade com erros no solver MIP",
+      "message": "O caso possui variáveis binárias e o solver não encontrou solução viável em algumas etapas/cenários. A divergência política/simulação pode ser consequência de restrições conflitantes na simulação horária.",
+      "recommendation": "1) Verificar restrições conflitantes (ex: geração mínima > combustível disponível). 2) Aumentar o tempo de solução do MIP. 3) Reduzir sub-etapas para 24h. 4) Após resolver os erros MIP, ativar a opção 'Não-Convexidade da Política'.",
+      "doc_section": "docs/convergence.md#política-vs-simulação-final",
+      "next_tree": "decision-trees/simulation.json"
     }
   ]
 }
