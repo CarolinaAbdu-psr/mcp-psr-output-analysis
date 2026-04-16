@@ -57,8 +57,15 @@ Definidas em `server.py`, implementadas em `dataframe_functions.py`.
 | `get_avaliable_results` | `(study_path)` | Define `RESULTS_FOLDER`. Lê `_index.json` e retorna bloco por arquivo com tipo, título, unidades, linhas e **nomes exatos das colunas**. Substitui `df_get_columns` para arquivos exportados do dashboard. **Chamar sempre primeiro.** |
 | `get_case_information` | `(study_path)` | Extrai metadados do HTML: etapas, séries, horizonte, versão, não-convexidades |
 | `get_workflow_doc` | `(doc_name)` | Carrega um arquivo de `docs/` (index, convergence, simulation, violations, marginal-costs, execution-time, csv-schema) |
-| `get_diagnostic_graph` | `()` | Carrega e formata `decision_graph.json` com nós, arestas ordenadas por prioridade e regras de travessia |
-| `get_conclusion_documentation` | `(search_intent, top_k=2)` | Busca por similaridade de palavras-chave nas seções de `Results.md`; retorna os top_k trechos mais relevantes |
+
+### Grafo de diagnóstico (traversal incremental)
+
+| Tool | Assinatura resumida | Para que serve |
+|---|---|---|
+| `get_graph_entry_point` | `(problem_type)` | **Passo 3** — retorna o nó raiz + sumário 2 níveis da subárvore + filhos imediatos. Se `problem_type` não bater, faz busca por keywords em todos os nós e retorna candidatos. |
+| `get_graph_node` | `(node_id)` | **Passo 4** — retorna um nó pelo ID com seus filhos imediatos (~200-400 tokens). Chamar repetidamente até chegar a um nó `conclusion`. |
+| `get_conclusion_documentation` | `(search_intent, top_k=2)` | **Obrigatório em todo nó conclusion** — busca por similaridade nas seções de `Results.md`; retorna os top_k trechos mais relevantes. A resposta final não pode ser escrita sem ter chamado esta ferramenta. |
+| `get_diagnostic_graph` | `()` | **Deprecated** — carrega o grafo inteiro (~5500 tokens). Substituído por `get_graph_entry_point` + `get_graph_node`. |
 
 ### Inspeção de DataFrames
 
@@ -104,31 +111,91 @@ Definidas em `server.py`, implementadas em `dataframe_functions.py`.
 
 ## decision_graph.json — estado atual
 
-**Formato:** Nós com `tools: []` (array, pode ter N ferramentas). Usado para o novo workflow de diagnóstico guiado.
+**Versão:** 1.1 — **26 nós, 28 arestas, 3 entry points**
 
-### Nós
+### Entry points
+
+| problem_type | Nó raiz |
+|---|---|
+| `problema_convergencia` | `node_root_nao_convergencia` |
+| `deslocamento_custo` | `node_deslocamento_custo_sim_politica` |
+| `problema_simulacao` | `node_simulacao` |
+
+### Nós — ramo convergência
 
 | ID | Tipo | Ferramentas | Propósito |
 |---|---|---|---|
-| `node_root_nao_convergencia` | analysis | `df_analyze_bounds` | Ponto de entrada — verifica se o caso convergiu |
-| `node_zinf_aproximando_zsup` | analysis | `df_analyze_bounds` | Zinf evoluindo — identifica iterações insuficientes |
-| `node_iteracoes_insuficientes` | conclusion | — (documentation) | Limite de iterações atingido antes da convergência |
-| `node_zinf_zsup_distantes` | analysis | `df_analyze_bounds` | Estagnação detectada — roteia para causa |
-| `node_penalidades_altas` | analysis | `df_analyze_composition`, `df_analyze_heatmap`, `df_filter_above_threshold` | Verifica dominância de penalidades (< 80% custo operativo) |
-| `node_calibrar_penalidades` | conclusion | — (documentation) | Recomenda calibração de penalidades |
-| `node_baixo_forwards` | analysis | `df_analyze_stagnation` | Estagnação com penalidades OK — verifica amostragem |
-| `node_limitacao_cenarios` | conclusion | — (documentation) | Forwards insuficientes para cobertura do espaço de estados |
+| `node_root_nao_convergencia` | analysis | `df_analyze_bounds` | **Entry point** — verifica se Zinf entrou no IC do Zsup |
+| `node_zinf_aproximando_zsup` | analysis | `df_analyze_bounds` | Zinf em trajetória (não-locked) — identifica iterações insuficientes |
+| `node_iteracoes_insuficientes` | conclusion | — | Limite de iterações atingido antes da convergência |
+| `node_zinf_zsup_distantes` | analysis | `df_analyze_bounds` | Estagnação estrutural — roteia para causa |
+| `node_penalidades_altas` | analysis | `df_analyze_composition`, `df_analyze_heatmap`, `df_filter_above_threshold` | Penalidades dominam (< 80% custo operativo) |
+| `node_calibrar_penalidades` | conclusion | — | Recomenda calibração de penalidades |
+| `node_baixo_forwards` | analysis | `df_analyze_stagnation` | Estagnação com penalidades OK — verifica amostragem forward |
+| `node_limitacao_cenarios` | conclusion | — | Forwards insuficientes para cobrir espaço de estados |
 
-### Arestas
+### Nós — ramo deslocamento de custos
+
+| ID | Tipo | Ferramentas | Propósito |
+|---|---|---|---|
+| `node_deslocamento_custo_sim_politica` | analysis | — | **Entry point** — divergência sistemática simulação vs política |
+| `node_variaveis_binarias` | analysis | — | Verifica presença de não-convexidades (via `get_case_information`) |
+| `node_integralidade_violada` | analysis | — | Confirma que integralidade não está sendo respeitada na simulação |
+| `node_ativar_nao_convexidade` | conclusion | — | Ativar solver MIP na fase de política |
+| `node_dados_diferentes_politica` | analysis | — | Dados divergentes que não afetam a FCF |
+| `node_fcf_outro_caso` | conclusion | — | FCF gerada por caso diferente |
+
+### Nós — ramo simulação
+
+| ID | Tipo | Ferramentas | Propósito |
+|---|---|---|---|
+| `node_simulacao` | analysis | — | **Entry point** — qualidade da fase de simulação |
+| `node_proporcao_custo_operativo_sim` | analysis | `df_analyze_composition` | Participação do custo operativo < 80% na simulação |
+| `node_verificar_etapas_penalidades_sim` | analysis | `df_analyze_composition`, `df_filter_above_threshold` | Etapas e agentes com penalidades elevadas |
+| `node_dispersao_custos_ena` | analysis | `df_cross_correlation` | Correlação custo operativo × ENA |
+| `node_dispersao_periodo_umido` | conclusion | — | Dispersão concentrada no período úmido |
+| `node_estado_solucao_etapa_cenario` | analysis | `df_analyze_heatmap` (solver_status) | Status do solver MIP por etapa × cenário |
+| `node_solucao_viavel` | analysis | — | Solver encontrou viável mas não ótima (tempo esgotado) |
+| `node_solucao_relaxada` | analysis | — | Solver relaxou integralidade |
+| `node_solucao_erro` | analysis | — | Solver sem solução (infactível ou erro) |
+| `node_aumentar_tempo_mip` | conclusion | — | Aumentar tempo limite do solver MIP |
+| `node_usar_slices_menores` | conclusion | — | Subdividir janela temporal do MIP |
+| `node_checar_conflito_variaveis` | conclusion | — | Investigar restrições conflitantes |
+
+> `node_calibrar_penalidades` é compartilhado pelos ramos convergência e simulação.
+
+### Arestas principais
 
 ```
-node_root_nao_convergencia  →  node_zinf_zsup_distantes     (priority 1)
-node_root_nao_convergencia  →  node_zinf_aproximando_zsup   (priority 2)
-node_zinf_aproximando_zsup  →  node_iteracoes_insuficientes (priority 1)
-node_zinf_zsup_distantes    →  node_penalidades_altas       (priority 1)
-node_zinf_zsup_distantes    →  node_baixo_forwards          (priority 2)
-node_penalidades_altas      →  node_calibrar_penalidades    (priority 1)
-node_baixo_forwards         →  node_limitacao_cenarios      (priority 1)
+── Convergência ──────────────────────────────────────────────────────
+node_root_nao_convergencia      → node_zinf_zsup_distantes         (p1)
+node_root_nao_convergencia      → node_zinf_aproximando_zsup       (p2)
+node_zinf_aproximando_zsup      → node_iteracoes_insuficientes     (p1)
+node_zinf_zsup_distantes        → node_penalidades_altas           (p1)
+node_zinf_zsup_distantes        → node_baixo_forwards              (p2)
+node_penalidades_altas          → node_calibrar_penalidades        (p1)
+node_baixo_forwards             → node_limitacao_cenarios          (p1)
+
+── Deslocamento de custos ────────────────────────────────────────────
+node_deslocamento_custo_sim_politica → node_variaveis_binarias     (p1)
+node_deslocamento_custo_sim_politica → node_dados_diferentes_politica (p2)
+node_variaveis_binarias         → node_integralidade_violada       (p1)
+node_integralidade_violada      → node_ativar_nao_convexidade      (p1)
+node_dados_diferentes_politica  → node_fcf_outro_caso              (p1)
+
+── Simulação ─────────────────────────────────────────────────────────
+node_simulacao → node_proporcao_custo_operativo_sim                (p1)
+node_simulacao → node_dispersao_custos_ena                         (p2)
+node_simulacao → node_estado_solucao_etapa_cenario                 (p3)
+node_proporcao_custo_operativo_sim → node_verificar_etapas_penalidades_sim (p1)
+node_verificar_etapas_penalidades_sim → node_calibrar_penalidades  (p1)
+node_dispersao_custos_ena       → node_dispersao_periodo_umido     (p1)
+node_estado_solucao_etapa_cenario → node_solucao_viavel            (p1)
+node_estado_solucao_etapa_cenario → node_solucao_relaxada          (p2)
+node_estado_solucao_etapa_cenario → node_solucao_erro              (p3)
+node_solucao_viavel/relaxada/erro → node_aumentar_tempo_mip        (p1)
+node_solucao_viavel/relaxada/erro → node_usar_slices_menores       (p2)
+node_solucao_erro               → node_checar_conflito_variaveis   (p3)
 ```
 
 ---
@@ -207,3 +274,8 @@ node_baixo_forwards         →  node_limitacao_cenarios      (priority 1)
 | 2026-04-16 | Skill `sddp-diagnose` reescrita para o novo workflow de grafo | `skills/sddp-diagnose.md` |
 | 2026-04-16 | `sddp_html_to_csv.py`: detecta tipo de gráfico por camada; gera `_index.json` junto com os CSVs | `sddp_html_to_csv.py` |
 | 2026-04-16 | `get_avaliable_results` lê `_index.json` e expõe nomes de colunas por arquivo — substitui `df_get_columns` para arquivos do dashboard | `server.py` |
+| 2026-04-16 | Grafo expandido para 26 nós / 28 arestas: ramos deslocamento de custos e simulação adicionados | `decision-trees/decision_graph.json` |
+| 2026-04-16 | `get_diagnostic_graph` deprecated; adicionados `get_graph_entry_point` e `get_graph_node` para traversal incremental (~200 tokens/passo vs ~5500) | `server.py` |
+| 2026-04-16 | `get_graph_entry_point`: fallback por busca de keywords + sumário 2 níveis da subárvore quando `problem_type` não bate exato | `server.py` |
+| 2026-04-16 | Critério de convergência explicitado: Zinf dentro de [Lower_CI, Upper_CI] = convergido (independente de igualar Zsup) | `decision-trees/decision_graph.json` |
+| 2026-04-16 | Skill atualizada: travessia incremental, avaliação sequencial de prioridades, `get_conclusion_documentation` obrigatório antes de responder | `skills/sddp-diagnose.md` |

@@ -68,6 +68,7 @@ mcp = FastMCP(
         "    node details + outgoing edges with child previews. Repeat until a conclusion node "
         "    is reached. On conclusion nodes: call get_conclusion_documentation(search_intent). "
         "3. df_* tools — execute analysis as instructed by each graph node. "
+        "4. Get conclusiion_documentation to use as knowledge to explain to the user why did't work"
 
         "## Rules "
         "- Call extract_html_results + get_case_information before get_avaliable_results. "
@@ -469,6 +470,50 @@ def get_diagnostic_graph() -> str:
     return "\n".join(lines)
 
 
+def _search_nodes_by_query(nodes_by_id: dict, query: str) -> list[tuple[dict, int]]:
+    """Keyword search across node labels, purposes, and descriptions."""
+    import re
+    stop = {"de", "do", "da", "dos", "das", "e", "o", "a", "os", "as",
+            "em", "no", "na", "por", "para", "com", "que", "se", "um", "uma",
+            "the", "of", "in", "and", "to", "is", "for"}
+    tokens = {
+        t for t in re.split(r'\W+', query.lower())
+        if len(t) > 2 and t not in stop
+    }
+    results: list[tuple[dict, int]] = []
+    for node in nodes_by_id.values():
+        haystack = " ".join([
+            node.get("label", ""),
+            node.get("purpose", ""),
+            node.get("content", {}).get("description", ""),
+            node.get("content", {}).get("expected_state", ""),
+        ]).lower()
+        score = sum(1 for t in tokens if t in haystack)
+        if score > 0:
+            results.append((node, score))
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
+
+
+def _subtree_summary(root_id: str, adjacency: dict, nodes_by_id: dict, depth: int = 2) -> str:
+    """Return a compact listing of nodes reachable from root_id up to `depth` levels."""
+    lines: list[str] = []
+
+    def _walk(nid: str, level: int) -> None:
+        if level > depth:
+            return
+        node = nodes_by_id.get(nid, {})
+        pad  = "  " * level
+        ntype = node.get("type", "?")
+        label = node.get("label", nid)
+        lines.append(f"{pad}{'└─' if level else '●'} [{ntype}] {label}")
+        for edge in adjacency.get(nid, []):
+            _walk(edge["target"], level + 1)
+
+    _walk(root_id, 0)
+    return "\n".join(lines)
+
+
 def _load_graph() -> tuple[dict, dict, dict]:
     """Load graph JSON and return (graph, nodes_by_id, adjacency)."""
     path = _TREES_DIR / "decision_graph.json"
@@ -544,13 +589,21 @@ def get_graph_entry_point(problem_type: str) -> str:
     Return the entry-point node for a problem type, plus its immediate
     outgoing edges with child node previews (~200 tokens).
 
+    Also shows a 2-level subtree summary so you can confirm this is the
+    right entry point before traversing.
+
+    If problem_type does not match any registered entry point, the tool
+    performs a keyword search across all nodes and returns the best
+    candidates — use get_graph_node(node_id) to start from any of them.
+
     Call this ONCE at the start of graph traversal instead of
     get_diagnostic_graph().  Then use get_graph_node(node_id) to navigate
     one step at a time.
 
     Args:
         problem_type: One of "problema_convergencia", "deslocamento_custo",
-                      "problema_simulacao".
+                      "problema_simulacao" — or a free-text description of
+                      the problem (used for keyword search if no exact match).
     """
     graph, nodes_by_id, adjacency = _load_graph()
     if not graph:
@@ -558,19 +611,56 @@ def get_graph_entry_point(problem_type: str) -> str:
 
     entry_points = graph.get("entry_points", {})
     node_id = entry_points.get(problem_type)
-    if not node_id:
-        valid = ", ".join(f'"{k}"' for k in entry_points)
-        return (
-            f'[Error] Unknown problem_type "{problem_type}". '
-            f"Valid values: {valid}"
-        )
 
-    node = nodes_by_id.get(node_id)
-    if not node:
-        return f"[Error] Entry node '{node_id}' not found in nodes list."
+    # ── Exact match found ─────────────────────────────────────────────────
+    if node_id:
+        node = nodes_by_id.get(node_id)
+        if not node:
+            return f"[Error] Entry node '{node_id}' not found in nodes list."
 
-    header = [f"=== ENTRY POINT: {problem_type} ===", ""]
-    return "\n".join(header) + "\n" + _format_node_block(node, adjacency, nodes_by_id)
+        subtree = _subtree_summary(node_id, adjacency, nodes_by_id, depth=2)
+        lines = [
+            f"=== ENTRY POINT: {problem_type} ===",
+            "",
+            "Subtree covered by this entry point:",
+            subtree,
+            "",
+        ]
+        return "\n".join(lines) + "\n" + _format_node_block(node, adjacency, nodes_by_id)
+
+    # ── No exact match — list registered entry points + keyword search ────
+    lines = [
+        f'[No exact match for "{problem_type}"]',
+        "",
+        "## Registered entry points",
+    ]
+    for ep_key, ep_node_id in entry_points.items():
+        ep_node = nodes_by_id.get(ep_node_id, {})
+        subtree = _subtree_summary(ep_node_id, adjacency, nodes_by_id, depth=2)
+        lines += [
+            f"",
+            f'  problem_type="{ep_key}"',
+            f'  Root node   : {ep_node_id}',
+            f'  Label       : {ep_node.get("label", "")}',
+            f'  Subtree     :',
+        ]
+        for sub_line in subtree.splitlines():
+            lines.append(f"    {sub_line}")
+
+    hits = _search_nodes_by_query(nodes_by_id, problem_type)[:3]
+    if hits:
+        lines += [
+            "",
+            f'## Keyword search results for "{problem_type}"',
+            "  Use get_graph_node(node_id) to start from any of these:",
+        ]
+        for hit_node, score in hits:
+            lines.append(
+                f'  • {hit_node["id"]}  (score={score})  [{hit_node.get("type","?")}]  '
+                f'{hit_node.get("label","")}'
+            )
+
+    return "\n".join(lines)
 
 
 @mcp.tool()

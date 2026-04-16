@@ -109,15 +109,16 @@ Não confunda "Zinf ≠ Zsup" com "não convergiu". A convergência é definida 
 #### Para nós do tipo `conclusion` (folhas do grafo):
 
 ```
-1. Registre o diagnóstico final indicado pelo nó
-2. Chame get_conclusion_documentation(search_intent)
+1. Chame get_conclusion_documentation(search_intent)
    usando o valor exato do campo "Doc search_intent" retornado pelo nó
-3. Use o conteúdo retornado para embasar a explicação ao usuário
-4. Prossiga para o PASSO 5
+   ⚠️  NÃO escreva a resposta ao usuário antes de receber o retorno desta chamada
+2. Leia o conteúdo retornado — ele é a base técnica da explicação
+3. Somente então prossiga para o PASSO 5 para sintetizar a resposta
 ```
 
 **REGRAS ABSOLUTAS — nunca viole:**
 - **Toda conclusão exige travessia completa do grafo** — nunca responda com diagnóstico sem ter chegado a um nó `conclusion`
+- **`get_conclusion_documentation` é obrigatório em todo nó `conclusion`** — a resposta final só pode ser escrita após receber o retorno desta ferramenta; escrever antes é um erro
 - Chame apenas UM nó por vez via `get_graph_node` — nunca chame `get_diagnostic_graph`
 - Avalie arestas **estritamente em ordem crescente de prioridade** — nunca pule prioridades
 - Siga exatamente as arestas do grafo — não infira atalhos nem pule nós intermediários
