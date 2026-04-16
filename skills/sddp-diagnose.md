@@ -73,6 +73,20 @@ Esta ferramenta retorna apenas o nó raiz e seus filhos imediatos (~200 tokens �
 
 ### PASSO 4 — Percorrer o grafo incrementalmente (um nó por vez)
 
+> **OBRIGATÓRIO:** Toda conclusão diagnóstica DEVE ser resultado da travessia completa do grafo.
+> É proibido responder ao usuário com uma conclusão antes de ter chegado a um nó `conclusion` via este fluxo.
+> Não use conhecimento prévio sobre SDDP para "pular" etapas — o grafo é a única fonte de roteamento.
+
+#### Critério de convergência (nós de análise de bounds)
+
+Quando `df_analyze_bounds` for chamado para avaliar Zinf vs. Zsup:
+- **Convergido** = Zinf está **dentro** do intervalo `[Lower_CI, Upper_CI]` na última iteração, independentemente de atingir o valor exato de Zsup
+- **Não convergido** = Zinf está **fora** do intervalo na última iteração
+
+Não confunda "Zinf ≠ Zsup" com "não convergiu". A convergência é definida pela entrada no intervalo de confiança.
+
+---
+
 #### Para nós do tipo `analysis`:
 
 ```
@@ -82,7 +96,12 @@ Esta ferramenta retorna apenas o nó raiz e seus filhos imediatos (~200 tokens �
       (obtidos no Passo 2 via get_avaliable_results)
    b. Chame a ferramenta com os parâmetros indicados
 3. Avalie os resultados contra o campo "Expect" do nó
-4. Escolha a aresta cuja condição é satisfeita (menor número de prioridade primeiro)
+4. Avalie as arestas de saída EM ORDEM DE PRIORIDADE (priority 1 primeiro):
+   - Verifique se a condição da aresta de priority=1 é satisfeita pelos dados
+   - Se SIM: siga essa aresta (chame get_graph_node com esse target)
+   - Se NÃO: avalie a aresta de priority=2; se satisfeita, siga-a
+   - Continue até encontrar uma aresta cuja condição seja verdadeira
+   - NUNCA avalie uma aresta de prioridade maior sem antes ter descartado as anteriores
 5. Chame get_graph_node(target_node_id) com o id do nó escolhido
 6. Repita a partir do passo 1 com o novo nó retornado
 ```
@@ -98,7 +117,9 @@ Esta ferramenta retorna apenas o nó raiz e seus filhos imediatos (~200 tokens �
 ```
 
 **REGRAS ABSOLUTAS — nunca viole:**
+- **Toda conclusão exige travessia completa do grafo** — nunca responda com diagnóstico sem ter chegado a um nó `conclusion`
 - Chame apenas UM nó por vez via `get_graph_node` — nunca chame `get_diagnostic_graph`
+- Avalie arestas **estritamente em ordem crescente de prioridade** — nunca pule prioridades
 - Siga exatamente as arestas do grafo — não infira atalhos nem pule nós intermediários
 - Não chame ferramentas além das listadas em `Tools to call` do nó atual
 - Adapte nomes de colunas pelos valores reais; nunca passe placeholders para as ferramentas

@@ -13,8 +13,8 @@
       "label": "Não convergência na política",
       "purpose": "Ponto de entrada para falha de convergência",
       "content": {
-        "description": "Avalia se o caso convergiu ou não e as informações básicas sobre o processo de convergência.",
-        "expected_state": "Se o caso não convergiu deve seguir para as próximas etapas."
+        "description": "Avalia se o caso convergiu. CRITÉRIO CORRETO: convergência é atingida quando Zinf entra dentro do intervalo de confiança [Lower_CI, Upper_CI] do Zsup — não é necessário que Zinf iguale exatamente o Zsup. Se na última iteração o valor de Zinf já está dentro desse intervalo, o caso convergiu.",
+        "expected_state": "Se Zinf estiver DENTRO do intervalo [Lower_CI, Upper_CI] na última iteração → caso CONVERGIU: interrompa a análise e informe resultado positivo. Se Zinf estiver FORA do intervalo → caso NÃO convergiu: siga para as próximas etapas."
       },
       "tools": [
         {
@@ -36,8 +36,8 @@
       "label": "Zinf está se aproximando do intervalo de confiança do Zsup",
       "purpose": "Verificar proximidade dos limites",
       "content": {
-        "description": "Verificar se a convergência está evoluindo",
-        "expected_state": "Se o Zinf está se aproximando do intervalo, ou seja não está 'locked', deve seguir para o próximo nó"
+        "description": "Verificar se Zinf está em trajetória de aproximação do intervalo de confiança, mesmo sem tê-lo atingido ainda. Um Zinf não-locked (coeficiente de variação acima do limiar) indica que o algoritmo ainda está aprendendo — apenas faltaram iterações.",
+        "expected_state": "Se Zinf NÃO está locked (ainda está evoluindo e se aproximando do intervalo): o número de iterações foi insuficiente → seguir para node_iteracoes_insuficientes. Se Zinf está locked (parou de evoluir): há estagnação estrutural → retornar ao nó pai e seguir para node_zinf_zsup_distantes."
       },
       "tools": [
         {
