@@ -10,136 +10,184 @@
       "type": "analysis",
       "label": "Não convergência na política",
       "purpose": "Ponto de entrada para falha de convergência",
-      "content": { 
-        "description": "Avalia se o caso convergiu ou não e as informações básicas sobre o processo de convergência.", 
-        "expected_state": "Se o caso não convergiu deve seguir para as próximas etapas."},
-      "tools": {
-        "name" : "df_analyze_bounds",
-        "params": {
+      "content": {
+        "description": "Avalia se o caso convergiu ou não e as informações básicas sobre o processo de convergência.",
+        "expected_state": "Se o caso não convergiu deve seguir para as próximas etapas."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_bounds",
+          "params": {
             "target_col": "Zinf",
             "lower_bound_col": "Lower_CI",
             "upper_bound_col": "Upper_CI",
             "reference_val_col": "Zsup",
             "iteration_col": "Iteration",
-            "lock_threshold": 0.005}
+            "lock_threshold": 0.005
+          }
         }
+      ]
     },
     {
       "id": "node_zinf_aproximando_zsup",
       "type": "analysis",
       "label": "Zinf está se aproximando do intervalo de confiança do Zsup",
       "purpose": "Verificar proximidade dos limites",
-      "content": { 
-        "description": "Verificar se a convergência está evoluindo", 
-        "expected_state": "Se o Zinf está se aproximando do intervalo, ou seja não está 'locked', deve seguir para o próximo nó" },
-      "tools": {
-        "name" : "df_analyze_bounds",
-        "params": {
+      "content": {
+        "description": "Verificar se a convergência está evoluindo",
+        "expected_state": "Se o Zinf está se aproximando do intervalo, ou seja não está 'locked', deve seguir para o próximo nó"
+      },
+      "tools": [
+        {
+          "name": "df_analyze_bounds",
+          "params": {
             "target_col": "Zinf",
             "lower_bound_col": "Lower_CI",
             "upper_bound_col": "Upper_CI",
             "reference_val_col": "Zsup",
             "iteration_col": "Iteration",
-            "lock_threshold": 0.005}
+            "lock_threshold": 0.005
+          }
         }
+      ]
     },
     {
       "id": "node_iteracoes_insuficientes",
       "type": "conclusion",
       "label": "Número máximo de iterações não foi suficiente",
-      "purpose": "Concluir que o número de iteraçãoes máximas não foi suficiente",
+      "purpose": "Concluir que o número de iterações máximas não foi suficiente",
       "documentation": {
         "retrieval_strategy": "similarity",
         "search_intent": "Número de iterações não suficiente",
         "top_k": 2
-        }
+      }
     },
     {
       "id": "node_zinf_zsup_distantes",
       "type": "analysis",
       "label": "Zinf e Zsup não se aproximam",
       "purpose": "Verificar divergência persistente",
-      "content": { 
-        "description": "Verificar se de fato há uma estagnação.", 
-        "expected_state": "Se de fato o Zinf e Zsup não estão se aproximando e os cortes estão estáticos seve seguir para os próximos nós" },
-      "tools": {
-        "name" : "df_analyze_bounds",
-        "params": {
+      "content": {
+        "description": "Verificar se de fato há uma estagnação.",
+        "expected_state": "Se de fato o Zinf e Zsup não estão se aproximando e os cortes estão estáticos deve seguir para os próximos nós"
+      },
+      "tools": [
+        {
+          "name": "df_analyze_bounds",
+          "params": {
             "target_col": "Zinf",
             "lower_bound_col": "Lower_CI",
             "upper_bound_col": "Upper_CI",
             "reference_val_col": "Zsup",
             "iteration_col": "Iteration",
-            "lock_threshold": 0.005}
+            "lock_threshold": 0.005
+          }
         }
+      ]
     },
     {
       "id": "node_penalidades_altas",
       "type": "analysis",
       "label": "Valores de penalidades são altos",
       "purpose": "Verificar impacto das penalidades na convergência",
-      "content": { 
-        "description": "", 
-        "expected_state": "" },
-      "tools": {}
+      "content": {
+        "description": "Verificar se as penalidades estão dominando a função objetivo. Se o custo operativo representa menos de 80% do custo total, as penalidades estão contaminando os cortes de Benders.",
+        "expected_state": "Se o custo operativo for menor que 80% do total, as penalidades estão altas e devem ser calibradas. Caso contrário, seguir para análise de forwards."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_composition",
+          "params": {
+            "target_cost_col": "Operating_Cost",
+            "all_cost_cols_json": "[\"Operating_Cost\", \"Penalty_Cost\"]",
+            "label_col": "Iteration",
+            "min_threshold": 80.0,
+            "max_threshold": 0.0
+          }
+        },
+        {
+          "name": "df_analyze_heatmap",
+          "params": {
+            "mode": "threshold",
+            "label_col": "Stage",
+            "threshold": 20.0,
+            "top_n": 10
+          }
+        },
+        {
+          "name": "df_filter_above_threshold",
+          "params": {
+            "threshold": 20.0,
+            "label_col": "Stage",
+            "direction": "above",
+            "top_n": 10
+          }
+        }
+      ]
     },
     {
-      "id": "node_dominancia_cortes",
-      "type": "analysis",
-      "label": "Cortes serão dominados dificultando a convergência",
-      "purpose": "Analisar redundância e dominância de restrições",
-      "content": { "description": "", "expected_state": "" },
-      "tools": []
-    },
-    {
-      "id": "node_acao_calibrar_penalidades",
-      "type": "action",
+      "id": "node_calibrar_penalidades",
+      "type": "conclusion",
       "label": "Calibrar valores das penalidades",
-      "purpose": "Ajustar pesos de penalização",
-      "content": { "description": "", "expected_state": "" },
-      "tools": []
+      "purpose": "Ajustar pesos de penalização para evitar dominância de cortes",
+      "content": {
+        "description": "As penalidades estão com valores excessivos, gerando cortes de Benders dominados que não aproximam corretamente a FCF. É necessário revisar e reduzir os valores de penalidade para que o custo operativo volte a dominar a função objetivo.",
+        "expected_state": ""
+      },
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Calibração de penalidades SDDP violações convergência cortes dominados",
+        "top_k": 2
+      }
     },
     {
       "id": "node_baixo_forwards",
       "type": "analysis",
       "label": "Baixo número de forwards",
-      "purpose": "Verificar amostragem de caminhos",
-      "content": { "description": "", "expected_state": "" },
-      "tools": []
+      "purpose": "Verificar amostragem de caminhos na fase forward",
+      "content": {
+        "description": "Verificar se o Zinf está estagnado mesmo com penalidades em nível aceitável. Nesse caso a causa provável é que o número reduzido de séries forward não gera diversidade suficiente para produzir cortes informativos.",
+        "expected_state": "Se o Zinf estiver estagnado e as penalidades estiverem aceitáveis, confirma-se que a amostragem de forwards é insuficiente."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_stagnation",
+          "params": {
+            "target_col": "Zinf",
+            "window_size": 5,
+            "cv_threshold": 1.0,
+            "slope_threshold": 0.01
+          }
+        }
+      ]
     },
     {
       "id": "node_limitacao_cenarios",
-      "type": "analysis",
+      "type": "conclusion",
       "label": "Número reduzido de séries de forwards limita a exploração de cenários",
-      "purpose": "Avaliar diversidade estatística",
-      "content": { "description": "", "expected_state": "" },
-      "tools": []
-    },
-    {
-      "id": "node_acao_aumentar_forwards",
-      "type": "action",
-      "label": "Aumentar número de forwards",
-      "purpose": "Expandir exploração do espaço de estados",
-      "content": { "description": "", "expected_state": "" },
-      "tools": []
+      "purpose": "Concluir que a amostra de forward é insuficiente para cobrir o espaço de estados",
+      "content": {
+        "description": "O número reduzido de séries forward impede que o algoritmo explore adequadamente o espaço de estados, limitando a geração de cortes informativos e causando a estagnação do Zinf.",
+        "expected_state": ""
+      },
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Número de séries forward convergência SDDP amostragem espaço de estados",
+        "top_k": 2
+      }
     }
   ],
   "edges": [
-    { "source": "node_root_nao_convergencia", "target": "node_zinf_proximo_zsup", "priority": 1 },
-    { "source": "node_root_nao_convergencia", "target": "node_zinf_zsup_distantes", "priority": 2 },
-    
-    { "source": "node_zinf_proximo_zsup", "target": "node_iteracoes_insuficientes", "priority": 1 },
-    { "source": "node_iteracoes_insuficientes", "target": "node_acao_aumentar_iteracoes", "priority": 1 },
-    
-    { "source": "node_zinf_zsup_distantes", "target": "node_cortes_estaticos", "priority": 1 },
-    
-    { "source": "node_cortes_estaticos", "target": "node_penalidades_altas", "priority": 1 },
-    { "source": "node_cortes_estaticos", "target": "node_baixo_forwards", "priority": 2 },
-    
-    { "source": "node_penalidades_altas", "target": "node_dominancia_cortes", "priority": 1 },
-    { "source": "node_dominancia_cortes", "target": "node_acao_calibrar_penalidades", "priority": 1 },
-    
-    { "source": "node_baixo_forwards", "target": "node_limitacao_cenarios", "priority": 1 },
-    { "source": "node_limitacao_cenarios", "target": "node_acao_aumentar_forwards", "priority": 1 }
+    { "source": "node_root_nao_convergencia", "target": "node_zinf_aproximando_zsup", "priority": 2 },
+    { "source": "node_root_nao_convergencia", "target": "node_zinf_zsup_distantes", "priority": 1 },
+
+    { "source": "node_zinf_aproximando_zsup", "target": "node_iteracoes_insuficientes", "priority": 1 },
+
+    { "source": "node_zinf_zsup_distantes", "target": "node_penalidades_altas", "priority": 1 },
+    { "source": "node_zinf_zsup_distantes", "target": "node_baixo_forwards", "priority": 2 },
+
+    { "source": "node_penalidades_altas", "target": "node_calibrar_penalidades", "priority": 1 },
+
+    { "source": "node_baixo_forwards", "target": "node_limitacao_cenarios", "priority": 1 }
   ]
 }

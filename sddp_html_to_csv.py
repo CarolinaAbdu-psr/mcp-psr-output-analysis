@@ -58,6 +58,26 @@ def _as_str(value) -> str:
     return str(value) if value is not None else ""
 
 
+def _detect_chart_type(layer_types: list[str]) -> str:
+    """
+    Infers the dominant chart type from the list of layer type strings.
+
+    Priority (most distinctive first):
+        heatmap  — any layer is "heatmap" or "heatmap_series"
+        band     — any layer is "area_range" (confidence/tolerance band)
+        bar      — any layer is "column"
+        line     — default (line / spline / scatter)
+    """
+    types = set(layer_types)
+    if types & {"heatmap", "heatmap_series"}:
+        return "heatmap"
+    if "area_range" in types:
+        return "band"
+    if "column" in types:
+        return "bar"
+    return "line"
+
+
 def _find_title_from_html(content: str, container_id: str) -> str:
     """
     Fallback: localiza o <h2> mais próximo do <div id="container_id"> no HTML.
@@ -209,6 +229,9 @@ def _extract_y_columns(data: list, series_type: str, name: str, has_x: bool) -> 
             }
 
     if has_x:
+        # Heatmaps têm estrutura [x, y_axis, value] — o valor real está em row[2]
+        if (series_type == "heatmap" or series_type == "heatmap_series" )  and data and isinstance(data[0], (list, tuple)) and len(data[0]) >= 3:
+            return {name: [row[2] for row in data]}
         return {name: [row[1] for row in data]}
 
     # Dados escalares
@@ -275,11 +298,13 @@ def extract_charts(html_path: str) -> list[dict]:
         x_index = None
         x_unit = ""
         y_unit = ""
+        layer_types: list[str] = []
 
         for layer in layers:
             name        = layer.get("name", "")
             data        = layer.get("data", [])
             series_type = layer.get("type", "line")
+            layer_types.append(series_type)
             domain      = layer.get("domain", "linear")
             point_start = layer.get("pointStart", 1)
             x_unit      = _as_str(layer.get("xUnit", x_unit))
@@ -303,10 +328,11 @@ def extract_charts(html_path: str) -> list[dict]:
         df.index.name = x_unit or "x"
 
         charts.append({
-            "title":  title,
-            "x_unit": x_unit,
-            "y_unit": y_unit,
-            "df":     df,
+            "title":      title,
+            "chart_type": _detect_chart_type(layer_types),
+            "x_unit":     x_unit,
+            "y_unit":     y_unit,
+            "df":         df,
         })
 
     return charts
@@ -343,17 +369,33 @@ def export_to_csv(
 
     charts = extract_charts(html_path)
     saved = []
+    index_entries = []
 
     for chart in charts:
-        filename = _sanitize_filename(chart["title"]+"_"+chart["y_unit"]) + ".csv"
+        filename = _sanitize_filename(chart["title"] + "_" + chart["y_unit"]) + ".csv"
         out_path = output_dir / filename
         chart["df"].to_csv(out_path, encoding="utf-8-sig")  # utf-8-sig → abre bem no Excel
         saved.append(str(out_path))
+        index_entries.append({
+            "filename":   filename,
+            "title":      chart["title"],
+            "chart_type": chart["chart_type"],
+            "x_unit":     chart["x_unit"],
+            "y_unit":     chart["y_unit"],
+            "series":     chart["df"].columns.tolist(),
+            "rows":       len(chart["df"]),
+        })
         if verbose:
-            print(f"  [OK] {filename}")
+            print(f"  [{chart['chart_type']:<7}] {filename}")
+
+    # Write companion index so consumers know type/units without parsing filenames
+    index_path = output_dir / "_index.json"
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index_entries, f, ensure_ascii=False, indent=2)
 
     if verbose:
         print(f"\n{len(saved)} graficos exportados para: {output_dir}")
+        print(f"  Índice escrito em: {index_path.name}")
 
     return saved
 

@@ -312,7 +312,7 @@ def analyze_bounds_and_reference(
             ),
         },
         "bounds_status": {
-            "is_inside_interval": is_inside,
+            "converged": is_inside,
             "current_value":      target_val,
             "interval":           [l_bound, u_bound],
             "interval_width":     u_bound - l_bound,

@@ -7,15 +7,14 @@ import json
 import os
 import sys
 from pathlib import Path
+import psr.factory
 
 from mcp.server.fastmcp import FastMCP
 
 from .case_information import extract_case_information as _extract_case_info
 from .common import read_csv, read_csv_path
 from .dataframe_functions import (
-    get_column_names,
     get_dataframe_head,
-    get_dataframe_size,
     get_data_summary,
     analyze_bounds_and_reference,
     analyze_composition,
@@ -59,17 +58,20 @@ mcp = FastMCP(
         "   charts as CSV files into the results/ folder. Call ONCE per session before anything else. "
         "0b. get_case_information(study_path) — extract case metadata (stages, horizon, series, "
         "    model version, dimensions) from the HTML. Call alongside step 0 to provide context. "
-        "1. get_avaliable_results(study_path) — set the results folder and see available CSVs. "
-        "2. get_workflow_doc(doc_name) — load technical documentation for the diagnostic area "
-        "   (index, convergence, simulation, violations, marginal-costs, execution-time, csv-schema). "
-        "3. get_decision_tree(area) — load the decision tree JSON to drive the diagnostic sequence. "
-        "4. df_* tools — execute the analysis following decision tree nodes. "
-        "5. get_sddp_knowledge(topics, problems) — retrieve theoretical grounding when needed. "
+        "1. get_avaliable_results(study_path) — set the results folder; returns all CSV files "
+        "   with their chart type, units, row count and exact column names from _index.json. "
+        "2. get_diagnostic_graph() — load the decision graph (nodes + edges). "
+        "   Start at the entry point and follow edges in priority order. "
+        "   For each analysis node call the tools listed in its tools[] array. "
+        "   When a conclusion node is reached call get_conclusion_documentation(search_intent). "
+        "3. df_* tools — execute analysis as instructed by each graph node. "
 
         "## Rules "
         "- Call extract_html_results + get_case_information before get_avaliable_results. "
         "- Always call get_avaliable_results before any df_* analysis tool. "
-        "- Use get_workflow_doc('index') to route user questions to the right area and tree. "
+        "- Column names for every dashboard CSV are already in get_avaliable_results output — "
+        "  do NOT call df_get_columns for files listed there. "
+        "- Follow graph edges strictly by priority order; do not skip nodes. "
         "- Respond in the user's language — not in English unless the user wrote in English. "
         "- Lead with conclusions; use tables for per-stage data. "
         "- See the sddp_diagnose prompt for detailed step-by-step guidance. "
@@ -179,11 +181,52 @@ def extract_html_results(study_path: str) -> list[str]:
 
 
 @mcp.tool()
-def get_avaliable_results(study_path: str) -> list[str]:
-    """Set the results folder and return the list of available CSV files."""
+def get_avaliable_results(study_path: str) -> str:
+    """
+    Set the active results folder and return the catalogue of available result files.
+
+    Reads the _index.json manifest written by extract_html_results, which contains
+    for each file: chart type, title, X/Y units, row count, and the exact column
+    names (series).  This single call replaces the need for df_get_columns on any
+    file that was exported from the SDDP dashboard.
+
+    If the manifest is absent (extract_html_results was not called yet), returns
+    a plain filename list as a fallback.
+
+    Args:
+        study_path: Absolute path to the SDDP case folder.
+    """
     global RESULTS_FOLDER
     RESULTS_FOLDER = Path(os.path.join(study_path, "results"))
-    return [f.name for f in RESULTS_FOLDER.iterdir() if f.is_file()]
+
+    index_path = RESULTS_FOLDER / "_index.json"
+    if not index_path.exists():
+        # Fallback: manifest not yet generated
+        files = sorted(f.name for f in RESULTS_FOLDER.iterdir() if f.is_file())
+        header = [
+            f"=== AVAILABLE RESULTS — {RESULTS_FOLDER.name} ({len(files)} files) ===",
+            "  [!] _index.json not found. Call extract_html_results first for full metadata.",
+            "",
+        ]
+        return "\n".join(header + [f"  {f}" for f in files])
+
+    with open(index_path, encoding="utf-8") as f:
+        index = json.load(f)
+
+    lines = [
+        f"=== AVAILABLE RESULTS — {RESULTS_FOLDER.name} ({len(index)} files) ===",
+        "",
+    ]
+    for e in index:
+        series_str = ", ".join(e["series"]) if e["series"] else "—"
+        lines += [
+            f"  [{e['chart_type']}]  {e['filename']}",
+            f"    Title   : {e['title']}",
+            f"    X unit  : {e['x_unit'] or '—'}   Y unit: {e['y_unit'] or '—'}   Rows: {e['rows']}",
+            f"    Columns : {series_str}",
+            "",
+        ]
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -264,17 +307,78 @@ def get_case_information(study_path: str) -> str:
 # Workflow documentation & decision trees
 # ---------------------------------------------------------------------------
 
-_DOCS_DIR  = _PACKAGE_ROOT / "docs"
-_TREES_DIR = _PACKAGE_ROOT / "decision-trees"
+_DOCS_DIR    = _PACKAGE_ROOT / "docs"
+_TREES_DIR   = _PACKAGE_ROOT / "decision-trees"
+_RESULTS_DOC = _PACKAGE_ROOT / "Results.md"
 
 _VALID_DOCS = {
     "index", "convergence", "simulation", "violations",
     "marginal-costs", "execution-time", "csv-schema",
 }
 
-_VALID_TREES = {
-    "master", "convergence", "simulation", "violations", "marginal-costs",
-}
+
+def _parse_results_sections(text: str) -> list[dict]:
+    """
+    Split Results.md into sections by ### headings.
+
+    Returns a list of dicts with keys:
+        heading  – the ### heading text (without #)
+        content  – full text of the section including the heading line
+        level    – heading level (2 for ##, 3 for ###)
+    """
+    import re
+    sections: list[dict] = []
+    pattern = re.compile(r'^(#{2,3})\s+(.+)$', re.MULTILINE)
+    matches = list(pattern.finditer(text))
+    for i, m in enumerate(matches):
+        level   = len(m.group(1))
+        heading = m.group(2).strip()
+        start   = m.start()
+        end     = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections.append({
+            "heading": heading,
+            "content": text[start:end].strip(),
+            "level":   level,
+        })
+    return sections
+
+
+def _score_section(section: dict, query_tokens: set[str]) -> int:
+    """Count how many query tokens appear in the section heading + content."""
+    haystack = (section["heading"] + " " + section["content"]).lower()
+    return sum(1 for t in query_tokens if t in haystack)
+
+
+def _search_results_doc(search_intent: str, top_k: int = 2) -> list[dict]:
+    """
+    Return the top_k Results.md sections most relevant to search_intent.
+
+    Preference is given to ## sections (level 2) when they score equally,
+    so the LLM receives the broadest contextual explanation first.
+    """
+    if not _RESULTS_DOC.exists():
+        return []
+
+    text     = _RESULTS_DOC.read_text(encoding="utf-8")
+    sections = _parse_results_sections(text)
+
+    import re
+    stop = {"de", "do", "da", "dos", "das", "e", "o", "a", "os", "as",
+            "em", "no", "na", "por", "para", "com", "que", "se", "um",
+            "uma", "the", "of", "in", "and", "to", "a", "is", "for"}
+    tokens = {
+        t for t in re.split(r'\W+', search_intent.lower())
+        if len(t) > 2 and t not in stop
+    }
+
+    scored = [
+        (s, _score_section(s, tokens))
+        for s in sections
+    ]
+    # Sort: higher score first; among ties prefer broader ## sections
+    scored.sort(key=lambda x: (x[1], 1 if x[0]["level"] == 2 else 0), reverse=True)
+
+    return [s for s, score in scored[:top_k] if score > 0]
 
 
 @mcp.tool()
@@ -291,9 +395,6 @@ def get_workflow_doc(doc_name: str) -> str:
         execution-time – forward/backward timing, performance patterns
         csv-schema     – maps SDDP CSV file names to expected columns
 
-    Call get_workflow_doc('index') first to identify which document and
-    decision tree apply to the user's question.
-
     Args:
         doc_name: One of the document names listed above (without .md).
     """
@@ -309,69 +410,146 @@ def get_workflow_doc(doc_name: str) -> str:
 
 
 @mcp.tool()
-def get_decision_tree(area: str) -> str:
+def get_diagnostic_graph() -> str:
     """
-    Load a diagnostic decision tree JSON for a specific SDDP analysis area.
+    Load the diagnostic decision graph (decision_graph.json).
 
-    Available trees:
-        master         – entry point: routes a question to the correct sub-tree
-        convergence    – diagnose Zinf/Zsup convergence quality
-        simulation     – diagnose simulation cost health and MIP solver status
-        violations     – diagnose constraint violations and penalty calibration
-        marginal-costs – diagnose CMO, ENA correlation, and deficit risk
+    Returns the full graph — entry points, nodes, and edges — formatted for
+    direct traversal.  The LLM must:
 
-    Workflow:
-        1. Call get_decision_tree('master') to identify the right area.
-        2. Call get_decision_tree('<area>') to load the step-by-step tree.
-        3. Follow each node: read description → call the tool in 'tool' field
-           with its 'params' → evaluate result against 'branches' → follow the
-           matching branch to the next node or a 'conclusion' node.
+    1. Start at the node indicated in entry_points.
+    2. For each analysis node: call every tool listed in tools[] with the
+       given params.  Adapt column name placeholders to the actual CSV column
+       names obtained from get_avaliable_results.
+    3. Interpret the results against the node's expected_state to decide
+       which outgoing edge to follow (lowest priority number = first to check).
+    4. Repeat until a node of type "conclusion" is reached.
+    5. On a conclusion node: call get_conclusion_documentation(search_intent)
+       using the node's documentation.search_intent field.
+
+    Edges are returned sorted by priority so the LLM evaluates them in order.
+    """
+    path = _TREES_DIR / "decision_graph.json"
+    if not path.exists():
+        return "[Error] decision_graph.json not found."
+
+    graph = json.loads(path.read_text(encoding="utf-8"))
+
+    # Index nodes by id for fast lookup
+    nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
+
+    # Build adjacency list sorted by priority
+    adjacency: dict[str, list[dict]] = {}
+    for edge in graph.get("edges", []):
+        src = edge["source"]
+        adjacency.setdefault(src, []).append(edge)
+    for edges in adjacency.values():
+        edges.sort(key=lambda e: e.get("priority", 99))
+
+    lines = [
+        "=== DIAGNOSTIC GRAPH ===",
+        "",
+        "## Entry points",
+    ]
+    for problem, node_id in graph.get("entry_points", {}).items():
+        lines.append(f"  {problem}  →  {node_id}")
+    lines.append("")
+
+    lines.append("## Nodes")
+    for node in graph.get("nodes", []):
+        nid   = node["id"]
+        ntype = node.get("type", "?")
+        label = node.get("label", "")
+        lines.append(f"\n[{nid}]  type={ntype}")
+        lines.append(f"  Label   : {label}")
+        lines.append(f"  Purpose : {node.get('purpose', '')}")
+
+        content = node.get("content", {})
+        if content.get("description"):
+            lines.append(f"  Desc    : {content['description']}")
+        if content.get("expected_state"):
+            lines.append(f"  Expect  : {content['expected_state']}")
+
+        tools = node.get("tools", [])
+        if tools:
+            lines.append(f"  Tools   :")
+            for t in tools:
+                params_str = ", ".join(f"{k}={v!r}" for k, v in t.get("params", {}).items())
+                lines.append(f"    • {t['name']}({params_str})")
+
+        doc = node.get("documentation", {})
+        if doc:
+            lines.append(f"  Doc search: \"{doc.get('search_intent', '')}\"  top_k={doc.get('top_k', 2)}")
+
+        # Outgoing edges
+        out = adjacency.get(nid, [])
+        if out:
+            lines.append(f"  Next    :")
+            for e in out:
+                lines.append(f"    {e.get('priority','?')}. → {e['target']}")
+
+    lines += [
+        "",
+        "## Traversal rules",
+        "  1. Execute all tools[] of the current node.",
+        "  2. Evaluate results against expected_state.",
+        "  3. Follow the lowest-priority edge whose condition is satisfied.",
+        "  4. On type=conclusion: call get_conclusion_documentation(search_intent).",
+    ]
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_conclusion_documentation(search_intent: str, top_k: int = 2) -> str:
+    """
+    Retrieve the most relevant sections from Results.md for a conclusion node.
+
+    Performs keyword-based similarity matching between search_intent and every
+    section of Results.md, returning the top_k best matches.  ## sections
+    (broad topics) are preferred over ### sections when scores are equal, so
+    the LLM always receives the high-level explanation alongside the detail.
+
+    Call this when the graph traversal reaches a node of type "conclusion",
+    passing the node's documentation.search_intent value.
 
     Args:
-        area: One of: master, convergence, simulation, violations, marginal-costs.
+        search_intent: Free-text description of the diagnosed problem.
+                       Use the exact value from the conclusion node's
+                       documentation.search_intent field.
+        top_k:         Maximum number of sections to return. Default 2.
     """
-    if area not in _VALID_TREES:
-        available = ", ".join(sorted(_VALID_TREES))
-        return f"[Error] Unknown tree '{area}'. Available: {available}"
+    if not _RESULTS_DOC.exists():
+        return "[Error] Results.md not found in repository root."
 
-    path = _TREES_DIR / f"{area}.json"
-    if not path.exists():
-        return f"[Error] Decision tree file not found: {path}"
+    matches = _search_results_doc(search_intent, top_k)
 
-    return path.read_text(encoding="utf-8")
+    if not matches:
+        return (
+            f"[No match] No section in Results.md matched '{search_intent}'.\n"
+            f"Returning full file.\n\n"
+            + _RESULTS_DOC.read_text(encoding="utf-8")
+        )
+
+    lines = [
+        f"=== RESULTS DOCUMENTATION — '{search_intent}' (top {len(matches)}) ===",
+        "",
+    ]
+    for i, section in enumerate(matches, 1):
+        level_label = "Topic" if section["level"] == 2 else "Section"
+        lines += [
+            f"── {level_label} {i}: {section['heading']} ──",
+            "",
+            section["content"],
+            "",
+        ]
+    return "\n".join(lines)
 
 
 
 # ---------------------------------------------------------------------------
 # Generic DataFrame tools
 # ---------------------------------------------------------------------------
-
-@mcp.tool()
-def df_get_columns(file_path: str) -> str:
-    """
-    List all column names in a CSV file.
-
-    Call this first when working with an unfamiliar file to discover available
-    columns before choosing which ones to pass to the other df_* tools.
-
-    Args:
-        file_path: Absolute path to the CSV file.
-    """
-    df, err = _load_csv(file_path)
-    if err:
-        return err
-
-    cols  = get_column_names(df)
-    lines = [
-        f"=== COLUMNS — {Path(file_path).name} ===",
-        "",
-        f"  Total columns: {len(cols)}",
-        "",
-    ]
-    for i, c in enumerate(cols, 1):
-        lines.append(f"  {i:>3}. {c}")
-    return "\n".join(lines)
-
 
 @mcp.tool()
 def df_get_head(file_path: str, n: int = 5) -> str:
@@ -417,54 +595,6 @@ def df_get_head(file_path: str, n: int = 5) -> str:
     ]
     for row in rows:
         lines.append(_fmt_row([row.get(c, "") for c in cols]))
-
-    return "\n".join(lines)
-
-
-@mcp.tool()
-def df_get_size(file_path: str, max_cells: int = 500) -> str:
-    """
-    Report the shape of a CSV file. If total cells ≤ max_cells, include the
-    full content so the LLM can read it directly without further tool calls.
-
-    Use this to decide: small file → read inline; large file → use targeted
-    df_* analysis tools instead.
-
-    Args:
-        file_path: Absolute path to the CSV file.
-        max_cells: Cell-count ceiling for inline content. Default 500.
-                   Raise to 2000 for moderately sized files.
-    """
-    df, err = _load_csv(file_path)
-    if err:
-        return err
-
-    result  = get_dataframe_size(df, max_cells)
-    n_rows  = result["shape"]["rows"]
-    n_cols  = result["shape"]["columns"]
-    total   = result["shape"]["total_cells"]
-
-    lines = [
-        f"=== SIZE — {Path(file_path).name} ===",
-        "",
-        f"  Rows        : {n_rows}",
-        f"  Columns     : {n_cols}",
-        f"  Total cells : {total}",
-        f"  Threshold   : {max_cells}",
-        "",
-    ]
-
-    if result["downloadable"]:
-        lines += [
-            "Full content (all rows fit within threshold):",
-            "",
-            result["full_content"],
-        ]
-    else:
-        lines.append(
-            f"[Content not included — {total} cells exceeds threshold {max_cells}. "
-            f"Use df_get_head() to preview structure or targeted df_* tools for analysis.]"
-        )
 
     return "\n".join(lines)
 
@@ -784,6 +914,7 @@ def df_filter_above_threshold(
         f"THRESHOLD FILTER ({direction.upper()} {threshold}) — {Path(file_path).name}"
     )
     return _format_result(result, title)
+
 
 
 # ---------------------------------------------------------------------------
