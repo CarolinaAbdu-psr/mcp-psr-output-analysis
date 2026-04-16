@@ -60,10 +60,13 @@ mcp = FastMCP(
         "    model version, dimensions) from the HTML. Call alongside step 0 to provide context. "
         "1. get_avaliable_results(study_path) — set the results folder; returns all CSV files "
         "   with their chart type, units, row count and exact column names from _index.json. "
-        "2. get_diagnostic_graph() — load the decision graph (nodes + edges). "
-        "   Start at the entry point and follow edges in priority order. "
-        "   For each analysis node call the tools listed in its tools[] array. "
-        "   When a conclusion node is reached call get_conclusion_documentation(search_intent). "
+        "2. get_graph_entry_point(problem_type) — resolve the entry node for the problem "
+        "   ('problema_convergencia', 'deslocamento_custo', or 'problema_simulacao'). "
+        "   Returns root node + immediate children only (~200 tokens). "
+        "2b. get_graph_node(node_id) — navigate ONE node at a time. Call after evaluating "
+        "    each analysis node's tools[] output against its expected_state. Returns current "
+        "    node details + outgoing edges with child previews. Repeat until a conclusion node "
+        "    is reached. On conclusion nodes: call get_conclusion_documentation(search_intent). "
         "3. df_* tools — execute analysis as instructed by each graph node. "
 
         "## Rules "
@@ -71,6 +74,8 @@ mcp = FastMCP(
         "- Always call get_avaliable_results before any df_* analysis tool. "
         "- Column names for every dashboard CSV are already in get_avaliable_results output — "
         "  do NOT call df_get_columns for files listed there. "
+        "- Traverse the decision graph ONE node at a time via get_graph_node; "
+        "  do not call get_diagnostic_graph (deprecated, loads full ~5500-token graph). "
         "- Follow graph edges strictly by priority order; do not skip nodes. "
         "- Respond in the user's language — not in English unless the user wrote in English. "
         "- Lead with conclusions; use tables for per-stage data. "
@@ -381,53 +386,17 @@ def _search_results_doc(search_intent: str, top_k: int = 2) -> list[dict]:
     return [s for s, score in scored[:top_k] if score > 0]
 
 
-@mcp.tool()
-def get_workflow_doc(doc_name: str) -> str:
-    """
-    Load a technical documentation file for the SDDP diagnostic workflow.
-
-    Available documents:
-        index          – keyword-to-area lookup table (read first for routing)
-        convergence    – Zinf/Zsup theory, Benders gaps, non-convergence causes
-        simulation     – 80% rule, MIP solver status, P10/P90 cost dispersion
-        violations     – hard/soft constraints, penalty calibration
-        marginal-costs – CMO, negative prices, ENA, deficit risk
-        execution-time – forward/backward timing, performance patterns
-        csv-schema     – maps SDDP CSV file names to expected columns
-
-    Args:
-        doc_name: One of the document names listed above (without .md).
-    """
-    if doc_name not in _VALID_DOCS:
-        available = ", ".join(sorted(_VALID_DOCS))
-        return f"[Error] Unknown doc '{doc_name}'. Available: {available}"
-
-    path = _DOCS_DIR / f"{doc_name}.md"
-    if not path.exists():
-        return f"[Error] Documentation file not found: {path}"
-
-    return path.read_text(encoding="utf-8")
-
 
 @mcp.tool()
 def get_diagnostic_graph() -> str:
     """
-    Load the diagnostic decision graph (decision_graph.json).
+    Deprecated: loads the full ~5500-token graph at once.
+
+    Prefer get_graph_entry_point + get_graph_node for incremental traversal
+    (~200-400 tokens per step). Kept for backwards compatibility only.
 
     Returns the full graph — entry points, nodes, and edges — formatted for
-    direct traversal.  The LLM must:
-
-    1. Start at the node indicated in entry_points.
-    2. For each analysis node: call every tool listed in tools[] with the
-       given params.  Adapt column name placeholders to the actual CSV column
-       names obtained from get_avaliable_results.
-    3. Interpret the results against the node's expected_state to decide
-       which outgoing edge to follow (lowest priority number = first to check).
-    4. Repeat until a node of type "conclusion" is reached.
-    5. On a conclusion node: call get_conclusion_documentation(search_intent)
-       using the node's documentation.search_intent field.
-
-    Edges are returned sorted by priority so the LLM evaluates them in order.
+    direct traversal.
     """
     path = _TREES_DIR / "decision_graph.json"
     if not path.exists():
@@ -498,6 +467,138 @@ def get_diagnostic_graph() -> str:
     ]
 
     return "\n".join(lines)
+
+
+def _load_graph() -> tuple[dict, dict, dict]:
+    """Load graph JSON and return (graph, nodes_by_id, adjacency)."""
+    path = _TREES_DIR / "decision_graph.json"
+    if not path.exists():
+        return {}, {}, {}
+    graph = json.loads(path.read_text(encoding="utf-8"))
+    nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
+    adjacency: dict[str, list[dict]] = {}
+    for edge in graph.get("edges", []):
+        adjacency.setdefault(edge["source"], []).append(edge)
+    for edges in adjacency.values():
+        edges.sort(key=lambda e: e.get("priority", 99))
+    return graph, nodes_by_id, adjacency
+
+
+def _format_node_block(node: dict, adjacency: dict, nodes_by_id: dict) -> str:
+    """Render a single node + its outgoing edges as a compact text block."""
+    nid   = node["id"]
+    ntype = node.get("type", "?")
+    lines = [
+        f"=== NODE: {nid} ===",
+        "",
+        f"type   : {ntype}",
+        f"Label  : {node.get('label', '')}",
+        f"Purpose: {node.get('purpose', '')}",
+    ]
+
+    content = node.get("content", {})
+    if content.get("description"):
+        lines.append(f"Desc   : {content['description']}")
+    if ntype == "analysis" and content.get("expected_state"):
+        lines.append(f"Expect : {content['expected_state']}")
+
+    tools = node.get("tools", [])
+    if tools:
+        lines.append("")
+        lines.append("Tools to call:")
+        for i, t in enumerate(tools, 1):
+            params_str = ", ".join(f"{k}={v!r}" for k, v in t.get("params", {}).items())
+            lines.append(f"  {i}. {t['name']}({params_str})")
+
+    doc = node.get("documentation", {})
+    if doc.get("search_intent"):
+        lines += [
+            "",
+            f'Doc search_intent: "{doc["search_intent"]}"',
+            f'  → Call: get_conclusion_documentation("{doc["search_intent"]}")',
+        ]
+
+    out_edges = adjacency.get(nid, [])
+    if out_edges:
+        lines += ["", "Next edges (sorted by priority):"]
+        for e in out_edges:
+            target_id    = e["target"]
+            target_node  = nodes_by_id.get(target_id, {})
+            target_label = target_node.get("label", target_id)
+            target_type  = target_node.get("type", "?")
+            snippet_src  = target_node.get("content", {}).get("description", "") or \
+                           target_node.get("documentation", {}).get("search_intent", "")
+            snippet      = (snippet_src[:150] + "…") if len(snippet_src) > 150 else snippet_src
+            lines.append(f"  {e.get('priority', '?')}. → {target_id}  [{target_type}]  {target_label}")
+            if snippet:
+                lines.append(f'     "{snippet}"')
+    else:
+        lines += ["", "No outgoing edges — this is a leaf node."]
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def get_graph_entry_point(problem_type: str) -> str:
+    """
+    Return the entry-point node for a problem type, plus its immediate
+    outgoing edges with child node previews (~200 tokens).
+
+    Call this ONCE at the start of graph traversal instead of
+    get_diagnostic_graph().  Then use get_graph_node(node_id) to navigate
+    one step at a time.
+
+    Args:
+        problem_type: One of "problema_convergencia", "deslocamento_custo",
+                      "problema_simulacao".
+    """
+    graph, nodes_by_id, adjacency = _load_graph()
+    if not graph:
+        return "[Error] decision_graph.json not found."
+
+    entry_points = graph.get("entry_points", {})
+    node_id = entry_points.get(problem_type)
+    if not node_id:
+        valid = ", ".join(f'"{k}"' for k in entry_points)
+        return (
+            f'[Error] Unknown problem_type "{problem_type}". '
+            f"Valid values: {valid}"
+        )
+
+    node = nodes_by_id.get(node_id)
+    if not node:
+        return f"[Error] Entry node '{node_id}' not found in nodes list."
+
+    header = [f"=== ENTRY POINT: {problem_type} ===", ""]
+    return "\n".join(header) + "\n" + _format_node_block(node, adjacency, nodes_by_id)
+
+
+@mcp.tool()
+def get_graph_node(node_id: str) -> str:
+    """
+    Return the full details of a single graph node plus its outgoing edges
+    with child node previews (~200-400 tokens).
+
+    Call this after evaluating the current node's tools[] output against its
+    expected_state to navigate to the next node.  Repeat until a conclusion
+    node is reached, then call get_conclusion_documentation(search_intent).
+
+    Args:
+        node_id: Exact node id string (e.g. "node_penalidades_altas").
+    """
+    graph, nodes_by_id, adjacency = _load_graph()
+    if not graph:
+        return "[Error] decision_graph.json not found."
+
+    node = nodes_by_id.get(node_id)
+    if not node:
+        valid = ", ".join(nodes_by_id.keys())
+        return (
+            f'[Error] Node "{node_id}" not found. '
+            f"Valid node ids: {valid}"
+        )
+
+    return _format_node_block(node, adjacency, nodes_by_id)
 
 
 @mcp.tool()

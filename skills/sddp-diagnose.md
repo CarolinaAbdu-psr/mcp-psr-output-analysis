@@ -55,46 +55,54 @@ Esta ferramenta lê o `_index.json` e retorna para **cada arquivo CSV**:
 
 ---
 
-### PASSO 3 — Carregar o grafo de decisão
+### PASSO 3 — Identificar o tipo de problema e obter o nó raiz
 
-Chame `get_diagnostic_graph()`.
+Mapeie a pergunta do usuário para um dos três tipos de problema:
 
-O grafo retorna:
-- **Entry points** — nó inicial para cada tipo de problema
-- **Nodes** — com tipo (`analysis` ou `conclusion`), ferramentas a chamar (`tools[]`), e estado esperado (`expected_state`)
-- **Edges** — saídas de cada nó ordenadas por prioridade
+| Tipo de problema | problem_type |
+|---|---|
+| Zinf/Zsup não convergem, iterações insuficientes | `problema_convergencia` |
+| Custo da simulação difere sistematicamente da política | `deslocamento_custo` |
+| Qualidade da simulação (penalidades, solver MIP, ENA) | `problema_simulacao` |
+
+Chame `get_graph_entry_point(problem_type)`.
+
+Esta ferramenta retorna apenas o nó raiz e seus filhos imediatos (~200 tokens — não o grafo inteiro).
 
 ---
 
-### PASSO 4 — Percorrer o grafo
-
-Identifique o entry point correspondente ao problema do usuário e siga as instruções abaixo.
+### PASSO 4 — Percorrer o grafo incrementalmente (um nó por vez)
 
 #### Para nós do tipo `analysis`:
 
 ```
-1. Leia o campo "Desc" e "Expect" do nó para entender o que está sendo avaliado
-2. Para cada ferramenta listada em "Tools":
+1. Leia os campos "Desc", "Expect" e "Tools to call" retornados pelo nó atual
+2. Para cada ferramenta listada em "Tools to call":
    a. Substitua os nomes de colunas placeholder pelos nomes reais do CSV
       (obtidos no Passo 2 via get_avaliable_results)
    b. Chame a ferramenta com os parâmetros indicados
-3. Avalie os resultados contra o "Expect" do nó
-4. Siga a aresta de menor prioridade cuja condição seja satisfeita
+3. Avalie os resultados contra o campo "Expect" do nó
+4. Escolha a aresta cuja condição é satisfeita (menor número de prioridade primeiro)
+5. Chame get_graph_node(target_node_id) com o id do nó escolhido
+6. Repita a partir do passo 1 com o novo nó retornado
 ```
-
-**REGRAS ABSOLUTAS — nunca viole:**
-- Siga exatamente as arestas do grafo — não infira atalhos nem pule nós intermediários
-- Não chame ferramentas além das listadas em `tools[]` do nó atual
-- Adapte nomes de colunas pelos valores reais; nunca passe placeholders para as ferramentas
 
 #### Para nós do tipo `conclusion` (folhas do grafo):
 
 ```
 1. Registre o diagnóstico final indicado pelo nó
 2. Chame get_conclusion_documentation(search_intent)
-   usando o valor exato de "Doc search" do nó
+   usando o valor exato do campo "Doc search_intent" retornado pelo nó
 3. Use o conteúdo retornado para embasar a explicação ao usuário
+4. Prossiga para o PASSO 5
 ```
+
+**REGRAS ABSOLUTAS — nunca viole:**
+- Chame apenas UM nó por vez via `get_graph_node` — nunca chame `get_diagnostic_graph`
+- Siga exatamente as arestas do grafo — não infira atalhos nem pule nós intermediários
+- Não chame ferramentas além das listadas em `Tools to call` do nó atual
+- Adapte nomes de colunas pelos valores reais; nunca passe placeholders para as ferramentas
+- O contexto da conversa já rastreia em qual nó você está — não salve em memória
 
 ---
 
@@ -138,8 +146,10 @@ Componha a resposta final com a seguinte estrutura:
 | `extract_html_results` | Passo 1 — exporta CSVs e gera `_index.json` |
 | `get_case_information` | Passo 1 — metadados do caso |
 | `get_avaliable_results` | Passo 2 — catálogo completo com colunas de cada CSV |
-| `get_diagnostic_graph` | Passo 3 — carrega o grafo de decisão |
+| `get_graph_entry_point` | Passo 3 — obtém o nó raiz para o tipo de problema |
+| `get_graph_node` | Passo 4 — navega incrementalmente (um nó por vez) |
 | `get_conclusion_documentation` | Ao chegar em nó conclusion — carrega explicação de `Results.md` |
+| `get_diagnostic_graph` | **Deprecated** — não usar em novas sessões |
 | `df_get_head` | Verificar escala e formato dos dados de um CSV desconhecido |
 | `df_get_summary` | Estatísticas (média, min, max, std) em colunas específicas |
 | `df_analyze_bounds` | Verificar se Zinf está dentro do IC de Zsup |
@@ -155,7 +165,8 @@ Componha a resposta final com a seguinte estrutura:
 |---|---|
 | `df_get_columns` | Colunas já disponíveis em `get_avaliable_results` |
 | `df_get_size` | Informação de linhas já disponível em `get_avaliable_results` |
-| `get_decision_tree` | `get_diagnostic_graph` (carrega `decision_graph.json`) |
+| `get_decision_tree` | `get_graph_entry_point` + `get_graph_node` |
+| `get_diagnostic_graph` | `get_graph_entry_point` + `get_graph_node` (traversal incremental) |
 
 ---
 

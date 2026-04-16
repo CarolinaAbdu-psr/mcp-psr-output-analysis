@@ -1,8 +1,10 @@
 {
   "graph_id": "flow_decisao_001",
-  "version": "1.0",
+  "version": "1.1",
   "entry_points": {
-    "problema_convergencia": "node_root_nao_convergencia"
+    "problema_convergencia": "node_root_nao_convergencia",
+    "deslocamento_custo": "node_deslocamento_custo_sim_politica",
+    "problema_simulacao": "node_simulacao"
   },
   "nodes": [
     {
@@ -175,6 +177,247 @@
         "search_intent": "Número de séries forward convergência SDDP amostragem espaço de estados",
         "top_k": 2
       }
+    },
+
+    {
+      "id": "node_deslocamento_custo_sim_politica",
+      "type": "analysis",
+      "label": "Deslocamento de custos simulação x política",
+      "purpose": "Ponto de entrada para investigar divergência entre custos da simulação e da política",
+      "content": {
+        "description": "Verificar se há diferença sistemática entre os custos calculados na simulação e na política. O deslocamento pode ser causado por variáveis binárias não respeitadas na simulação ou pelo uso de dados diferentes entre política e simulação.",
+        "expected_state": "Identificar a origem do deslocamento para direcionar o diagnóstico ao caminho correto."
+      }
+    },
+    {
+      "id": "node_variaveis_binarias",
+      "type": "analysis",
+      "label": "Há variáveis binárias?",
+      "purpose": "Verificar se o modelo utiliza variáveis binárias (não-convexidades) que possam não estar sendo respeitadas na simulação",
+      "content": {
+        "description": "Consultar as informações do caso (seção Non-Convexities de get_case_information) para checar se há variáveis binárias ativas. A presença de não-convexidades na política, sem que sejam ativadas na simulação, causa deslocamento de custos.",
+        "expected_state": "Se houver variáveis binárias ativas, a integralidade pode não estar sendo respeitada na simulação. Seguir para node_integralidade_violada."
+      }
+    },
+    {
+      "id": "node_dados_diferentes_politica",
+      "type": "analysis",
+      "label": "Simulação com dados diferentes da política que não afetam a FCF",
+      "purpose": "Verificar se a simulação utiliza dados distintos dos da política em variáveis que não influenciam a Função de Custo Futuro",
+      "content": {
+        "description": "Checar se foram usados dados diferentes entre política e simulação (ex.: horizonte, séries, manutenções, restrições operativas) que não alteram a FCF mas causam deslocamento no custo simulado. Isso inclui verificar se a FCF usada na simulação vem de outro caso.",
+        "expected_state": "Se os dados divergentes não afetam a FCF, o deslocamento não é de convergência mas de configuração. Verificar se está sendo usada FCF de outro caso."
+      }
+    },
+    {
+      "id": "node_integralidade_violada",
+      "type": "analysis",
+      "label": "Integralidade das variáveis não está sendo respeitada",
+      "purpose": "Confirmar que a não-convexidade ativa na política não está sendo aplicada na simulação",
+      "content": {
+        "description": "Quando variáveis binárias existem na política mas a simulação não resolve o MIP, as decisões de despacho podem divergir, causando deslocamento de custos. A solução é ativar a não-convexidade também na fase de simulação.",
+        "expected_state": "Confirmar a divergência e recomendar ativação da não-convexidade na política de simulação."
+      }
+    },
+    {
+      "id": "node_fcf_outro_caso",
+      "type": "conclusion",
+      "label": "Está sendo usada a FCF de outro caso",
+      "purpose": "Concluir que a FCF aplicada na simulação foi gerada por um caso diferente, causando deslocamento",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "FCF externo caso diferente política simulação deslocamento custo futuro",
+        "top_k": 2
+      }
+    },
+    {
+      "id": "node_ativar_nao_convexidade",
+      "type": "conclusion",
+      "label": "Ativar não-convexidade na política",
+      "purpose": "Recomendar ativação do solver MIP na fase de política para respeitar integralidade das variáveis binárias",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Não-convexidade variáveis binárias política SDDP MIP integralidade deslocamento",
+        "top_k": 2
+      }
+    },
+
+    {
+      "id": "node_simulacao",
+      "type": "analysis",
+      "label": "Simulação",
+      "purpose": "Ponto de entrada para diagnóstico de problemas na fase de simulação",
+      "content": {
+        "description": "Avaliar os resultados da simulação em três dimensões: composição dos custos (penalidades), correlação de custos com a ENA e status do solver por etapa e cenário.",
+        "expected_state": "Seguir pelos três caminhos de diagnóstico em ordem de prioridade para identificar a causa raiz."
+      }
+    },
+    {
+      "id": "node_proporcao_custo_operativo_sim",
+      "type": "analysis",
+      "label": "Proporção do custo operativo < 80%",
+      "purpose": "Verificar se as penalidades dominam o custo total na simulação",
+      "content": {
+        "description": "Calcular a participação do custo operativo no custo total da simulação. Se essa proporção for inferior a 80%, as penalidades estão inflacionando o custo simulado e as etapas/agentes com maior participação de penalidade devem ser identificados.",
+        "expected_state": "Se a proporção do custo operativo for menor que 80% em alguma etapa, seguir para node_verificar_etapas_penalidades_sim."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_composition",
+          "params": {
+            "target_cost_col": "Operating_Cost",
+            "all_cost_cols_json": "[\"Operating_Cost\", \"Penalty_Cost\"]",
+            "label_col": "Stage",
+            "min_threshold": 80.0,
+            "max_threshold": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "id": "node_verificar_etapas_penalidades_sim",
+      "type": "analysis",
+      "label": "Verificar etapas e penalidades em que isso ocorre",
+      "purpose": "Identificar quais etapas e agentes concentram maior participação de penalidades na simulação",
+      "content": {
+        "description": "Detalhar por etapa e por agente (coluna de penalidade) onde a participação de penalidades supera o limite. Permite identificar padrões sazonais ou de elementos específicos do sistema.",
+        "expected_state": "Listar as etapas e agentes com penalidades elevadas para embasar a calibração."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_composition",
+          "params": {
+            "target_cost_col": "Operating_Cost",
+            "all_cost_cols_json": "[\"Operating_Cost\", \"Penalty_Cost\"]",
+            "label_col": "Stage",
+            "min_threshold": 80.0,
+            "max_threshold": 0.0
+          }
+        },
+        {
+          "name": "df_filter_above_threshold",
+          "params": {
+            "threshold": 20.0,
+            "label_col": "Stage",
+            "direction": "above",
+            "top_n": 10
+          }
+        }
+      ]
+    },
+    {
+      "id": "node_dispersao_custos_ena",
+      "type": "analysis",
+      "label": "Dispersão de custos x ENA",
+      "purpose": "Verificar se a dispersão dos custos simulados está correlacionada com a ENA ou se reflete ruído não hidrológico",
+      "content": {
+        "description": "Calcular a correlação entre o custo operativo simulado e a Energia Natural Afluente (ENA) por etapa e cenário. Alta dispersão descorrelacionada da ENA pode indicar penalidades, restrições artificiais ou problemas de modelagem.",
+        "expected_state": "Se a dispersão for alta e pouco correlacionada com a ENA, investigar se está concentrada no período úmido ou em etapas específicas."
+      },
+      "tools": [
+        {
+          "name": "df_cross_correlation",
+          "params": {
+            "col_a": "ENA",
+            "col_b": "Operating_Cost",
+            "join_on": "Stage"
+          }
+        }
+      ]
+    },
+    {
+      "id": "node_dispersao_periodo_umido",
+      "type": "conclusion",
+      "label": "Verificar se as dispersões maiores estão no período úmido",
+      "purpose": "Concluir que a dispersão de custos está concentrada no período úmido, indicando possível problema de modelagem hidrológica ou penalidades de vertimento",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Dispersão custo período úmido ENA hidrologia vertimento simulação cenários",
+        "top_k": 2
+      }
+    },
+    {
+      "id": "node_estado_solucao_etapa_cenario",
+      "type": "analysis",
+      "label": "Estado da solução por etapa e cenário (Simulação horária)",
+      "purpose": "Identificar etapas e cenários com solução sub-ótima, relaxada ou infactível no solver MIP da simulação horária",
+      "content": {
+        "description": "Analisar o heatmap de status do solver (0=Ótimo, 1=Viável, 2=Relaxado, 3=Sem solução) para cada etapa e cenário da simulação horária. Células não-ótimas indicam que o MIP não foi resolvido adequadamente.",
+        "expected_state": "Se houver células com status 1 (Viável), seguir para node_solucao_viavel. Se status 2 (Relaxado), seguir para node_solucao_relaxada. Se status 3 (Erro), seguir para node_solucao_erro."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_heatmap",
+          "params": {
+            "mode": "solver_status",
+            "label_col": "Stage",
+            "top_n": 10
+          }
+        }
+      ]
+    },
+    {
+      "id": "node_solucao_viavel",
+      "type": "analysis",
+      "label": "Solução Viável",
+      "purpose": "Diagnosticar etapas com solução viável (não-ótima) no solver MIP — o tempo limite foi atingido antes da otimalidade",
+      "content": {
+        "description": "O solver encontrou uma solução viável mas não comprovou otimalidade dentro do tempo limite. O custo pode estar superestimado e as decisões de despacho podem ser sub-ótimas. Aumentar o tempo do MIP ou reduzir o tamanho do problema são as ações recomendadas.",
+        "expected_state": "Recomendar aumento do tempo do MIP (prioridade 1) ou uso de slices menores para reduzir o problema (prioridade 2)."
+      }
+    },
+    {
+      "id": "node_solucao_relaxada",
+      "type": "analysis",
+      "label": "Solução Relaxada",
+      "purpose": "Diagnosticar etapas com solução relaxada — integralidade das variáveis binárias foi descartada pelo solver",
+      "content": {
+        "description": "O solver não conseguiu resolver o MIP e relaxou as restrições de integralidade. As variáveis binárias foram tratadas como contínuas, comprometendo a validade física do despacho. O deslocamento de custos resultante pode ser significativo.",
+        "expected_state": "Recomendar aumento do tempo do MIP (prioridade 1) ou uso de slices menores para reduzir o problema (prioridade 2)."
+      }
+    },
+    {
+      "id": "node_solucao_erro",
+      "type": "analysis",
+      "label": "Erro",
+      "purpose": "Diagnosticar etapas com falha total do solver — nenhuma solução foi encontrada",
+      "content": {
+        "description": "O solver não encontrou nenhuma solução para a etapa/cenário. Isso pode indicar infactibilidade do problema, conflito entre restrições, tempo insuficiente ou configuração inadequada do MIP.",
+        "expected_state": "Recomendar aumento do tempo do MIP (prioridade 1), slices menores (prioridade 2) ou checar conflito de variáveis (prioridade 3)."
+      }
+    },
+    {
+      "id": "node_aumentar_tempo_mip",
+      "type": "conclusion",
+      "label": "Aumentar tempo do MIP",
+      "purpose": "Recomendar aumento do tempo limite do solver MIP para permitir obtenção de solução ótima ou viável",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Tempo limite solver MIP simulação horária SDDP configuração otimalidade",
+        "top_k": 2
+      }
+    },
+    {
+      "id": "node_usar_slices_menores",
+      "type": "conclusion",
+      "label": "Usar slices menores para reduzir o problema",
+      "purpose": "Recomendar subdivisão temporal do problema MIP em janelas menores para reduzir complexidade e viabilizar solução ótima",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Slice janela temporal MIP simulação horária redução complexidade SDDP",
+        "top_k": 2
+      }
+    },
+    {
+      "id": "node_checar_conflito_variaveis",
+      "type": "conclusion",
+      "label": "Checar conflito de variáveis",
+      "purpose": "Investigar restrições conflitantes ou variáveis binárias incompatíveis que tornam o problema infactível",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Conflito restrições variáveis binárias infactibilidade MIP simulação SDDP",
+        "top_k": 2
+      }
     }
   ],
   "edges": [
@@ -188,6 +431,39 @@
 
     { "source": "node_penalidades_altas", "target": "node_calibrar_penalidades", "priority": 1 },
 
-    { "source": "node_baixo_forwards", "target": "node_limitacao_cenarios", "priority": 1 }
+    { "source": "node_baixo_forwards", "target": "node_limitacao_cenarios", "priority": 1 },
+
+    { "source": "node_deslocamento_custo_sim_politica", "target": "node_variaveis_binarias", "priority": 1 },
+    { "source": "node_deslocamento_custo_sim_politica", "target": "node_dados_diferentes_politica", "priority": 2 },
+
+    { "source": "node_variaveis_binarias", "target": "node_integralidade_violada", "priority": 1 },
+
+    { "source": "node_dados_diferentes_politica", "target": "node_fcf_outro_caso", "priority": 1 },
+
+    { "source": "node_integralidade_violada", "target": "node_ativar_nao_convexidade", "priority": 1 },
+
+    { "source": "node_simulacao", "target": "node_proporcao_custo_operativo_sim", "priority": 1 },
+    { "source": "node_simulacao", "target": "node_dispersao_custos_ena", "priority": 3 },
+    { "source": "node_simulacao", "target": "node_estado_solucao_etapa_cenario", "priority": 2 },
+
+    { "source": "node_proporcao_custo_operativo_sim", "target": "node_verificar_etapas_penalidades_sim", "priority": 1 },
+
+    { "source": "node_verificar_etapas_penalidades_sim", "target": "node_calibrar_penalidades", "priority": 1 },
+
+    { "source": "node_dispersao_custos_ena", "target": "node_dispersao_periodo_umido", "priority": 1 },
+
+    { "source": "node_estado_solucao_etapa_cenario", "target": "node_solucao_viavel", "priority": 1 },
+    { "source": "node_estado_solucao_etapa_cenario", "target": "node_solucao_relaxada", "priority": 2 },
+    { "source": "node_estado_solucao_etapa_cenario", "target": "node_solucao_erro", "priority": 3 },
+
+    { "source": "node_solucao_viavel", "target": "node_aumentar_tempo_mip", "priority": 1 },
+    { "source": "node_solucao_viavel", "target": "node_usar_slices_menores", "priority": 2 },
+
+    { "source": "node_solucao_relaxada", "target": "node_aumentar_tempo_mip", "priority": 1 },
+    { "source": "node_solucao_relaxada", "target": "node_usar_slices_menores", "priority": 2 },
+
+    { "source": "node_solucao_erro", "target": "node_aumentar_tempo_mip", "priority": 2 },
+    { "source": "node_solucao_erro", "target": "node_usar_slices_menores", "priority": 3 },
+    { "source": "node_solucao_erro", "target": "node_checar_conflito_variaveis", "priority": 1 }
   ]
 }
