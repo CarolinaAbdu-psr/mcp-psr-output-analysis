@@ -16,6 +16,7 @@ class AgentState(TypedDict):
 
     # Graph traversal state
     problem_type: str              # "problema_convergencia" | "deslocamento_custo" | "problema_simulacao"
+    entry_point_ranking: list[str] # entry-point node IDs ordered by LLM relevance (set by router)
     current_node_id: str           # ID of the node currently being processed
     traversal_history: list[str]   # ordered list of visited node IDs (loop guard)
     tool_results: list[dict]       # [{node_id, results: [{tool_name, params, result}]}]

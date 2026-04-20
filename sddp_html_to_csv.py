@@ -94,6 +94,62 @@ def _find_title_from_html(content: str, container_id: str) -> str:
     return re.sub(r'<[^>]+>', '', h2_match.group(1)).strip()
 
 
+# --- NOVA FUNÇÃO ADICIONADA AQUI ---
+def _extract_tab_mapping(content: str, plots: dict) -> None:
+    """
+    Mapeia a hierarquia de abas (Aba Pai > Aba Filha) para cada container de gráfico,
+    adicionando a chave 'tab_name' ao dicionário de cada plot.
+    """
+    # 1. Mapear IDs de menus colapsáveis para seus nomes (Abas Pais)
+    parent_names = {}
+    for m in re.finditer(r'href="#([^"]+)"[^>]*>.*?</span>\s*([^<]+)</a>', content):
+        parent_names[m.group(1)] = m.group(2).strip()
+
+    # 2. Mapear Sub-abas para seus respectivos Pais
+    tab_to_full_name = {}
+    collapse_sections = re.finditer(r'<div[^>]*class="[^"]*collapse[^"]*"[^>]*id="([^"]+)"', content)
+    
+    for section in collapse_sections:
+        parent_id = section.group(1)
+        parent_name = parent_names.get(parent_id, "")
+        
+        start_pos = section.end()
+        end_search = content.find('</div>', start_pos)
+        if end_search == -1: 
+            end_search = len(content)
+        
+        sub_content = content[start_pos:end_search]
+        for sub_m in re.finditer(r'data-bs-target="#([^"]+)"[^>]*>.*?</span>\s*([^<]+)</a>', sub_content):
+            sub_id = sub_m.group(1)
+            sub_name = sub_m.group(2).strip()
+            if parent_name:
+                tab_to_full_name[sub_id] = f"{parent_name} - {sub_name}"
+            else:
+                tab_to_full_name[sub_id] = sub_name
+
+    # 3. Adicionar abas simples (que não têm pai)
+    for m in re.finditer(r'data-bs-target="#([^"]+)"[^>]*>.*?</span>\s*([^<]+)</a>', content):
+        tid = m.group(1)
+        if tid not in tab_to_full_name:
+            tab_to_full_name[tid] = m.group(2).strip()
+
+    # 4. Vincular cada container_id à sua aba correspondente no corpo do HTML
+    for plot_info in plots.values():
+        container_id = plot_info["container_id"]
+        c_match = re.search(rf'id="{re.escape(container_id)}"', content)
+        final_name = "Geral"
+        
+        if c_match:
+            c_pos = c_match.start()
+            tabs_before = [m.group(1) for m in re.finditer(r'<div[^>]*class="[^"]*tab-pane[^"]*"[^>]*id="([^"]+)"', content[:c_pos])]
+            if tabs_before:
+                last_tab_id = tabs_before[-1]
+                final_name = tab_to_full_name.get(last_tab_id, last_tab_id)
+        
+        plot_info["tab_name"] = final_name
+# -----------------------------------
+
+
 def _extract_push_layers(content: str) -> list[tuple[str, str]]:
     """
     Extrai todos os pares (var_name, json_str) de chamadas push_layers,
@@ -274,6 +330,9 @@ def extract_charts(html_path: str) -> list[dict]:
         var_name, container_id, title, _subtitle = m.groups()
         plots[var_name] = {"title": title, "container_id": container_id, "layers": []}
 
+    # ADIÇÃO: Descobrir a qual Aba (tab) cada gráfico pertence
+    _extract_tab_mapping(content, plots)
+
     # 2. Associar layers aos gráficos (suporta JSON em linha única e multi-linha)
     for var_name, layers_json in _extract_push_layers(content):
         if var_name not in plots:
@@ -290,6 +349,7 @@ def extract_charts(html_path: str) -> list[dict]:
     for plot_info in plots.values():
         # Fallback: se o título do PSRPlot está vazio, busca o <h2> próximo ao container
         title = plot_info["title"] or _find_title_from_html(content, plot_info["container_id"])
+        tab_name = plot_info.get("tab_name", "Geral") # ADIÇÃO
         layers = plot_info["layers"]
         if not layers:
             continue
@@ -328,6 +388,7 @@ def extract_charts(html_path: str) -> list[dict]:
         df.index.name = x_unit or "x"
 
         charts.append({
+            "tab_name":   tab_name, # ADIÇÃO
             "title":      title,
             "chart_type": _detect_chart_type(layer_types),
             "x_unit":     x_unit,
@@ -372,12 +433,17 @@ def export_to_csv(
     index_entries = []
 
     for chart in charts:
-        filename = _sanitize_filename(chart["title"] + "_" + chart["y_unit"]) + ".csv"
+        # ADIÇÃO: Incluir o nome da aba e hierarquia no filename ("Aba Pai - Aba Filha - Titulo do Grafico_Unidade")
+        raw_filename = f"{chart['tab_name']} - {chart['title']}_{chart['y_unit']}"
+        filename = _sanitize_filename(raw_filename) + ".csv"
+        
         out_path = output_dir / filename
         chart["df"].to_csv(out_path, encoding="utf-8-sig")  # utf-8-sig → abre bem no Excel
         saved.append(str(out_path))
+        
         index_entries.append({
             "filename":   filename,
+            "tab_name":   chart["tab_name"], # ADIÇÃO
             "title":      chart["title"],
             "chart_type": chart["chart_type"],
             "x_unit":     chart["x_unit"],
@@ -412,5 +478,3 @@ if __name__ == "__main__":
     html_file = sys.argv[1]
     out_dir = sys.argv[2] if len(sys.argv) > 2 else None
     export_to_csv(html_file, out_dir)
-
-

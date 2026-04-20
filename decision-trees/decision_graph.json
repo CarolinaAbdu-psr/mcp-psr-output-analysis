@@ -4,7 +4,8 @@
   "entry_points": {
     "problema_convergencia": "node_root_nao_convergencia",
     "deslocamento_custo": "node_deslocamento_custo_sim_politica",
-    "problema_simulacao": "node_simulacao"
+    "problema_simulacao": "node_simulacao",
+    "violacao": "node_violacao"
   },
   "nodes": [
     {
@@ -418,6 +419,131 @@
         "search_intent": "Conflito restrições variáveis binárias infactibilidade MIP simulação SDDP",
         "top_k": 2
       }
+    },
+    {
+      "id": "node_violacao",
+      "type": "analysis",
+      "label": "Violações e Penalidades",
+      "purpose": "Entry point for diagnosing violations and soft-constraint calibration issues",
+      "content": {
+        "description": "Investigate whether soft-constraint violations are excessive, systematic, or seasonal. Violations indicate that the model is paying penalty costs to remain feasible, which may signal miscalibrated penalty values or conflicting constraints.",
+        "expected_state": "User is asking about violations, penalties, constraint breaches, infeasibility, or soft-constraint calibration issues in the SDDP simulation."
+      },
+      "tools": []
+    },
+
+    {
+      "id": "node_media_proxima_maxima",
+      "type": "analysis",
+      "label": "Violação média ≈ violação máxima",
+      "purpose": "Test whether mean violation is close to max violation, indicating systematic occurrence across scenarios",
+      "content": {
+        "description": "If the mean violation across scenarios is nearly as large as the maximum violation, the constraint is being violated in most scenarios — not just worst-case ones. This is a strong signal that the penalty value is globally too low.",
+        "expected_state": "Mean/max ratio ≥ 0.8 for most violation columns → violations are systematic across scenarios (not isolated to extremes) → penalty needs global recalibration."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_violation",
+          "params": {
+            "analysis_type": "mean_vs_max",
+            "label_col": "Etapas",
+            "file_path_max": "<max_violations_file>",
+            "mean_max_ratio_threshold": 0.8,
+            "top_n": 5
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "node_violacao_frequente",
+      "type": "analysis",
+      "label": "Violações ocorrem com frequência",
+      "purpose": "Test whether violations occur in a high proportion of time stages",
+      "content": {
+        "description": "Count the share of stages where each violation column has non-zero values. If violations occur in more than 50% of stages, the constraint is being violated persistently — not sporadically. Persistent violations across time suggest the penalty is too low to discourage the behaviour.",
+        "expected_state": "Violations occur in ≥ 50% of stages for at least one violation column → FREQUENT → structural issue with penalty calibration."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_violation",
+          "params": {
+            "analysis_type": "frequency",
+            "label_col": "Etapas",
+            "violation_threshold": 0.0,
+            "frequency_threshold": 0.5,
+            "top_n": 5
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "node_sazonalidade_violacao",
+      "type": "analysis",
+      "label": "Violações com sazonalidade específica",
+      "purpose": "Test whether violations are concentrated in specific seasonal periods",
+      "content": {
+        "description": "Rank stages by total violation and check whether ≤ 25% of stages account for ≥ 75% of all violations. A seasonal pattern suggests the penalty value is adequate for most of the year but insufficient during specific periods (e.g., dry season).",
+        "expected_state": "Violations are concentrated in ≤ 25% of stages → SEASONAL → recalibrate penalty only for those periods, not globally."
+      },
+      "tools": [
+        {
+          "name": "df_analyze_violation",
+          "params": {
+            "analysis_type": "seasonality",
+            "label_col": "Etapas",
+            "top_n": 5
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "node_conflito_restricoes_analise",
+      "type": "analysis",
+      "label": "Conflito de restrições",
+      "purpose": "Fallback when no data pattern explains the violations — suggests conflicting constraints",
+      "content": {
+        "description": "When violations are neither systematic (mean ≈ max), nor frequent, nor seasonal, the most likely cause is that two or more constraints are inherently incompatible. The model is forced to violate at least one constraint regardless of penalty values.",
+        "expected_state": "No clear mean/max, frequency, or seasonality pattern confirms a different hypothesis → constraint conflict is the likely cause by exclusion."
+      },
+      "tools": []
+    },
+
+    {
+      "id": "node_penalidade_mal_calibrada_geral",
+      "type": "conclusion",
+      "label": "Penalidade mal calibrada globalmente",
+      "purpose": "Penalty value is too low across all stages — global recalibration needed",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Calibração penalidades SDDP violações sistemáticas soft constraints recalibrar",
+        "top_k": 2
+      }
+    },
+
+    {
+      "id": "node_penalidade_mal_calibrada_periodo",
+      "type": "conclusion",
+      "label": "Penalidade mal calibrada para períodos específicos",
+      "purpose": "Penalty value needs adjustment only for specific seasonal periods",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Calibração penalidades sazonalidade período seco úmido violações específicas",
+        "top_k": 2
+      }
+    },
+    {
+      "id": "node_conflito_restricoes_conclusao",
+      "type": "conclusion",
+      "label": "Conflito entre restrições do modelo",
+      "purpose": "Two or more constraints are incompatible, forcing the model to always violate",
+      "documentation": {
+        "retrieval_strategy": "similarity",
+        "search_intent": "Conflito restrições incompatíveis violação inevitável geração mínima inviabilidade",
+        "top_k": 2
+      }
     }
   ],
   "edges": [
@@ -464,6 +590,19 @@
 
     { "source": "node_solucao_erro", "target": "node_aumentar_tempo_mip", "priority": 2 },
     { "source": "node_solucao_erro", "target": "node_usar_slices_menores", "priority": 3 },
-    { "source": "node_solucao_erro", "target": "node_checar_conflito_variaveis", "priority": 1 }
+    { "source": "node_solucao_erro", "target": "node_checar_conflito_variaveis", "priority": 1 },
+
+    { "source": "node_violacao", "target": "node_media_proxima_maxima",       "priority": 1 },
+    { "source": "node_violacao", "target": "node_violacao_frequente",          "priority": 2 },
+    { "source": "node_violacao", "target": "node_sazonalidade_violacao",       "priority": 3 },
+    { "source": "node_violacao", "target": "node_conflito_restricoes_analise", "priority": 4 },
+
+    { "source": "node_media_proxima_maxima",       "target": "node_penalidade_mal_calibrada_geral",   "priority": 1 },
+    { "source": "node_violacao_frequente",          "target": "node_penalidade_mal_calibrada_geral",   "priority": 1 },
+    { "source": "node_sazonalidade_violacao",       "target": "node_penalidade_mal_calibrada_periodo", "priority": 1 },
+    { "source": "node_conflito_restricoes_analise", "target": "node_conflito_restricoes_conclusao",    "priority": 1 }
   ]
 }
+
+
+ 

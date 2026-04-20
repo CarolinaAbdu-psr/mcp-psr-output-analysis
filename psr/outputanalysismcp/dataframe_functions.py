@@ -968,3 +968,302 @@ def filter_by_threshold(
             for _, label, exc in stage_rows[:top_n]
         ],
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Violation analysis (mean vs max / frequency / seasonality)
+# ---------------------------------------------------------------------------
+
+def _violation_mean_vs_max(
+    df_mean: pd.DataFrame,
+    df_max: pd.DataFrame,
+    value_cols: list[str],
+    labels: list,
+    ratio_threshold: float,
+    top_n: int,
+) -> dict:
+    """Internal: compare mean-violation file vs max-violation file."""
+    shared_cols = [c for c in value_cols if c in df_max.columns]
+    if not shared_cols:
+        return {"error": "No matching columns between mean and max dataframes."}
+
+    per_col: list[dict] = []
+    systematic_count = 0
+
+    for col in shared_cols:
+        mean_vals = df_mean[col].astype(float).values
+        max_vals  = df_max[col].astype(float).values
+        n         = min(len(mean_vals), len(max_vals))
+
+        # Per-row ratio where max > 0
+        rows_with_violation = 0
+        ratio_sum = 0.0
+        for i in range(n):
+            if max_vals[i] > 0:
+                rows_with_violation += 1
+                ratio_sum += mean_vals[i] / max_vals[i]
+
+        avg_ratio = ratio_sum / rows_with_violation if rows_with_violation > 0 else 0.0
+        is_systematic = avg_ratio >= ratio_threshold
+        if is_systematic:
+            systematic_count += 1
+
+        per_col.append({
+            "column":            col,
+            "rows_with_violation": rows_with_violation,
+            "avg_mean_max_ratio": round(avg_ratio, 4),
+            "is_systematic":     is_systematic,
+        })
+
+    per_col.sort(key=lambda x: x["avg_mean_max_ratio"], reverse=True)
+    n_cols = len(shared_cols)
+    majority_systematic = systematic_count > n_cols / 2
+
+    return {
+        "analysis_type":   "mean_vs_max",
+        "ratio_threshold": ratio_threshold,
+        "summary": {
+            "columns_analyzed":      n_cols,
+            "systematic_violations": systematic_count,
+            "systematic_pct":        round(systematic_count / n_cols * 100, 1) if n_cols else 0.0,
+            "verdict":               "SYSTEMATIC" if majority_systematic else "WORST_CASE_ONLY",
+            "interpretation": (
+                "Most violations occur across the majority of scenarios, not just worst-case ones. "
+                "Penalty value is likely too low globally — recalibrate upward."
+                if majority_systematic else
+                "Violations are concentrated in the worst-case scenarios. "
+                "Penalty calibration may be acceptable; investigate extreme scenario drivers."
+            ),
+        },
+        "top_columns": per_col[:top_n],
+    }
+
+
+def _violation_frequency(
+    df: pd.DataFrame,
+    value_cols: list[str],
+    labels: list,
+    violation_threshold: float,
+    frequency_threshold: float,
+    top_n: int,
+) -> dict:
+    """Internal: compute the proportion of stages with non-zero violations."""
+    n_stages = len(df)
+    per_col: list[dict] = []
+
+    for col in value_cols:
+        vals        = df[col].astype(float)
+        n_violated  = int((vals > violation_threshold).sum())
+        freq_pct    = n_violated / n_stages * 100 if n_stages > 0 else 0.0
+        is_frequent = freq_pct >= frequency_threshold * 100
+
+        per_col.append({
+            "column":       col,
+            "stages_with_violation": n_violated,
+            "frequency_pct": round(freq_pct, 1),
+            "is_frequent":  is_frequent,
+        })
+
+    per_col.sort(key=lambda x: x["frequency_pct"], reverse=True)
+    frequent_count = sum(1 for c in per_col if c["is_frequent"])
+
+    return {
+        "analysis_type":        "frequency",
+        "violation_threshold":  violation_threshold,
+        "frequency_threshold_pct": frequency_threshold * 100,
+        "summary": {
+            "total_stages":              n_stages,
+            "frequently_violated_cols":  frequent_count,
+            "verdict":                   "FREQUENT" if frequent_count > 0 else "SPORADIC",
+            "interpretation": (
+                f"{frequent_count} column(s) have violations in ≥{frequency_threshold*100:.0f}% of stages. "
+                "Persistent pattern suggests penalty value is too low — recalibrate globally."
+                if frequent_count > 0 else
+                "Violations are sporadic (< threshold in all columns). "
+                "No persistent structural issue detected from frequency alone."
+            ),
+        },
+        "top_columns": per_col[:top_n],
+    }
+
+
+def _violation_seasonality(
+    df: pd.DataFrame,
+    value_cols: list[str],
+    labels: list,
+    top_n: int,
+) -> dict:
+    """Internal: identify whether violations are concentrated in specific stages."""
+    data          = df[value_cols].astype(float)
+    stage_totals  = data.sum(axis=1).values
+    total_viol    = float(stage_totals.sum())
+
+    if total_viol == 0:
+        return {
+            "analysis_type": "seasonality",
+            "summary": {
+                "total_stages": len(labels),
+                "total_violation": 0.0,
+                "verdict": "NO_VIOLATIONS",
+                "interpretation": "No violations found in any stage.",
+            },
+            "top_stages":    [],
+            "bottom_stages": [],
+        }
+
+    # Rank stages by their total violation
+    stage_info = sorted(
+        zip(labels, stage_totals.tolist()),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+
+    # How many stages account for 75% of total violation?
+    cumulative = 0.0
+    concentration_stages = 0
+    for _, val in stage_info:
+        cumulative += val
+        concentration_stages += 1
+        if cumulative >= 0.75 * total_viol:
+            break
+
+    # "Seasonal" = top 25% (or fewer) of stages hold 75% of violations
+    cutoff       = max(1, len(labels) // 4)
+    is_seasonal  = concentration_stages <= cutoff
+
+    return {
+        "analysis_type": "seasonality",
+        "summary": {
+            "total_stages":      len(labels),
+            "total_violation":   round(total_viol, 4),
+            "stages_for_75pct":  concentration_stages,
+            "seasonal_cutoff":   cutoff,
+            "verdict":           "SEASONAL" if is_seasonal else "SPREAD",
+            "interpretation": (
+                f"75% of total violations are concentrated in {concentration_stages} stage(s) "
+                f"(cutoff={cutoff}). Violations are seasonal — recalibrate penalty for those specific periods."
+                if is_seasonal else
+                f"Violations are spread across {concentration_stages} stages before reaching 75% of total. "
+                "No strong seasonal concentration detected."
+            ),
+        },
+        "top_stages":    [{"stage": lbl, "total_violation": round(float(val), 4)} for lbl, val in stage_info[:top_n]],
+        "bottom_stages": [{"stage": lbl, "total_violation": round(float(val), 4)} for lbl, val in stage_info[-top_n:]],
+    }
+
+
+def analyze_violation(
+    df: pd.DataFrame,
+    label_col: str | None = None,
+    value_cols: list[str] | None = None,
+    analysis_type: str = "frequency",
+    df_max: pd.DataFrame | None = None,
+    mean_max_ratio_threshold: float = 0.8,
+    violation_threshold: float = 0.0,
+    frequency_threshold: float = 0.5,
+    top_n: int = 5,
+) -> dict:
+    """
+    Unified violation analysis with three complementary lenses.
+
+    Pass ``analysis_type`` to select which question to answer:
+
+    **"mean_vs_max"** — Are violations systematic across scenarios or only in extremes?
+        Requires ``df_max`` (the max-violation DataFrame).
+        Computes the mean/max ratio per stage per column.
+        If ratio ≥ ``mean_max_ratio_threshold`` for most columns → ``SYSTEMATIC``.
+        Systematic violations usually mean the penalty is too low globally.
+
+    **"frequency"** — Do violations occur in most time stages?
+        Computes the share of stages where each column exceeds ``violation_threshold``.
+        If share ≥ ``frequency_threshold`` → column is ``FREQUENT``.
+        Frequent violations across many stages → persistent structural problem.
+
+    **"seasonality"** — Are violations concentrated in specific periods?
+        Sums violations per stage and checks whether ≤25% of stages hold ≥75%
+        of total violations.
+        ``SEASONAL`` result → recalibrate penalty only for those periods.
+        ``SPREAD`` result → violations are diffuse, not period-specific.
+
+    Args:
+        df:                      Primary DataFrame (typically mean-violation CSV).
+                                 Rows = stages, columns = violation types.
+        label_col:               Column containing stage/period labels.
+                                 If None, uses row index.
+        value_cols:              Columns to analyse.  If None, auto-detects numeric
+                                 columns (excluding ``label_col``).
+        analysis_type:           ``"mean_vs_max"`` | ``"frequency"`` | ``"seasonality"``.
+        df_max:                  Second DataFrame with max-violation values.
+                                 Required only when ``analysis_type="mean_vs_max"``.
+        mean_max_ratio_threshold: Ratio cutoff for "systematic" classification.
+                                 Default 0.8.
+        violation_threshold:     Minimum value to count as a violation in
+                                 ``"frequency"`` mode.  Default 0.0.
+        frequency_threshold:     Share of stages (0–1) above which a column is
+                                 considered "frequently" violated.  Default 0.5.
+        top_n:                   Maximum entries in ranked output lists. Default 5.
+
+    Returns:
+        Dict with ``analysis_type``, ``summary`` (verdict + interpretation),
+        and per-column or per-stage details depending on mode.
+
+    Example::
+
+        # Frequency analysis
+        result = analyze_violation(
+            df_mean_violations,
+            label_col="Etapas",
+            analysis_type="frequency",
+            frequency_threshold=0.5,
+        )
+
+        # Mean vs Max analysis
+        result = analyze_violation(
+            df_mean_violations,
+            label_col="Etapas",
+            analysis_type="mean_vs_max",
+            df_max=df_max_violations,
+            mean_max_ratio_threshold=0.8,
+        )
+    """
+    if df.empty:
+        return {"error": "DataFrame is empty"}
+
+    # Resolve value columns
+    if value_cols is None:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        value_cols = [c for c in numeric_cols if c != label_col]
+
+    if not value_cols:
+        return {"error": "No numeric value columns found. Specify value_cols explicitly."}
+
+    # Row labels
+    if label_col and label_col in df.columns:
+        labels: list = df[label_col].tolist()
+    else:
+        labels = list(range(len(df)))
+
+    atype = analysis_type.strip().lower()
+
+    if atype == "mean_vs_max":
+        if df_max is None:
+            return {"error": "df_max is required for analysis_type='mean_vs_max'. "
+                             "Pass the max-violation DataFrame."}
+        return _violation_mean_vs_max(
+            df, df_max, value_cols, labels, mean_max_ratio_threshold, top_n
+        )
+    elif atype == "frequency":
+        return _violation_frequency(
+            df, value_cols, labels, violation_threshold, frequency_threshold, top_n
+        )
+    elif atype == "seasonality":
+        return _violation_seasonality(df, value_cols, labels, top_n)
+    else:
+        return {
+            "error": (
+                f"Unknown analysis_type: {analysis_type!r}. "
+                "Choose 'mean_vs_max', 'frequency', or 'seasonality'."
+            )
+        }
+

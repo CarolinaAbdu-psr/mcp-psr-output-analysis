@@ -7,13 +7,14 @@ history to produce the structured markdown format defined in sddp-diagnose.md.
 from __future__ import annotations
 
 import json
-import os
 
-#from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..system_prompt import SYSTEM_PROMPT
+from ..utils import get_logger
+
+_log = get_logger("synthesizer")
 
 _SYNTHESIS_PROMPT = """\
 You have completed the SDDP diagnostic graph traversal. Compose the final diagnosis.
@@ -58,6 +59,8 @@ Rules:
 - Status is ALERTA when the issue degrades quality but the case is still usable.
 - Status is OK only if no real problem was found despite traversal.
 - Cite specific numbers from the tool_results — do not make up values.
+- If tool results contain errors ({{"error": "..."}}), acknowledge that data was unavailable
+  for that metric and note it in the support table.
 - If multiple conclusions were reached (multiple branches), produce one section per branch,
   then a brief overall summary.
 - Respond in the SAME LANGUAGE as the user question.
@@ -65,31 +68,50 @@ Rules:
 
 
 def _get_llm() -> ChatOpenAI:
-    llm = ChatOpenAI(model_name="gpt-4.1",max_tokens=2048, temperature=0.4)
-    #return ChatAnthropic(model=os.getenv("SDDP_AGENT_MODEL", "claude-sonnet-4-6"),temperature=0,max_tokens=256,)
-    return llm
+    return ChatOpenAI(model_name="gpt-4.1", max_tokens=2048, temperature=0.4)
 
 
 def synthesize_response(state: dict) -> dict:
     """
     Generate the final structured diagnosis.
 
-    Reads: conclusion_nodes, tool_results, user_query, traversal_history
+    Reads:  conclusion_nodes, tool_results, user_query, traversal_history
     Writes: final_response
     """
     conclusions = state.get("conclusion_nodes", [])
     all_tool_results = state.get("tool_results", [])
     traversal = state.get("traversal_history", [])
 
-    # Compact tool result representation to save tokens
+    _log.debug(
+        "[synthesizer] conclusions=%d  tool_result_nodes=%d  path=%s",
+        len(conclusions),
+        len(all_tool_results),
+        " → ".join(traversal),
+    )
+
+    # Compact tool results to save tokens — drop verbose params, keep results
     compact_results: list[dict] = []
     for node_entry in all_tool_results:
         for r in node_entry.get("results", []):
-            compact_results.append({
+            entry = {
                 "node": node_entry.get("node_id", "?"),
                 "tool": r.get("tool_name", "?"),
                 "result": r.get("result", {}),
-            })
+            }
+            compact_results.append(entry)
+            if "error" in r.get("result", {}):
+                _log.warning(
+                    "[synthesizer] tool %s at node %s had error: %s",
+                    r.get("tool_name"),
+                    node_entry.get("node_id"),
+                    r["result"]["error"],
+                )
+
+    _log.debug(
+        "[synthesizer] %d tool calls total (%d with errors)",
+        len(compact_results),
+        sum(1 for r in compact_results if "error" in r.get("result", {})),
+    )
 
     prompt = _SYNTHESIS_PROMPT.format(
         user_query=state.get("user_query", ""),
@@ -104,4 +126,5 @@ def synthesize_response(state: dict) -> dict:
         HumanMessage(content=prompt),
     ])
 
+    _log.debug("[synthesizer] response length: %d chars", len(response.content))
     return {"final_response": response.content}

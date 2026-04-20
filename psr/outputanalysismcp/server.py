@@ -22,6 +22,7 @@ from .dataframe_functions import (
     analyze_cross_correlation,
     analyze_heatmap,
     filter_by_threshold,
+    analyze_violation,
 )
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1107,88 @@ def df_filter_above_threshold(
     )
     return _format_result(result, title)
 
+
+
+@mcp.tool()
+def df_analyze_violation(
+    file_path: str,
+    analysis_type: str,
+    label_col: str = "",
+    value_cols_json: str = "",
+    file_path_max: str = "",
+    mean_max_ratio_threshold: float = 0.8,
+    violation_threshold: float = 0.0,
+    frequency_threshold: float = 0.5,
+    top_n: int = 5,
+) -> str:
+    """
+    Analyse violation (penalty) data from the SDDP dashboard using one of
+    three complementary lenses selected via ``analysis_type``:
+
+    **mean_vs_max** — Are violations systematic or only in worst-case scenarios?
+        Requires ``file_path`` (mean-violation CSV) AND ``file_path_max``
+        (max-violation CSV).  Computes the mean/max ratio per stage.
+        If ratio ≥ threshold for most columns → SYSTEMATIC → recalibrate globally.
+
+    **frequency** — Do violations occur in most time stages?
+        Uses ``file_path`` only.  Returns the percentage of stages where each
+        column exceeds ``violation_threshold``.
+        If share ≥ ``frequency_threshold`` → FREQUENT → structural problem.
+
+    **seasonality** — Are violations concentrated in specific periods?
+        Uses ``file_path`` only.  Ranks stages by total violation and checks
+        whether ≤25% of stages hold ≥75% of total violations.
+        SEASONAL → recalibrate only for those periods.
+
+    Args:
+        file_path:                Absolute path to the primary violation CSV
+                                  (mean violations, or any violation file for
+                                  frequency / seasonality).
+        analysis_type:            "mean_vs_max" | "frequency" | "seasonality".
+        label_col:                Stage/period label column (e.g. "Etapas").
+                                  Leave empty to use row index.
+        value_cols_json:          JSON array of violation columns to analyse.
+                                  Leave empty to auto-detect all numeric columns.
+                                  Example: '["Pen: Déficit energia", "Pen: Vertimento"]'
+        file_path_max:            Absolute path to the max-violation CSV.
+                                  Required only for analysis_type="mean_vs_max".
+        mean_max_ratio_threshold: Ratio cutoff for "systematic" (0–1). Default 0.8.
+        violation_threshold:      Minimum value to count as a violation in
+                                  "frequency" mode. Default 0.0.
+        frequency_threshold:      Share of stages (0–1) above which a column is
+                                  "frequently" violated. Default 0.5 (50%).
+        top_n:                    Maximum entries in ranked output lists. Default 5.
+    """
+    df, err = _load_csv(file_path)
+    if err:
+        return err
+
+    df_max = None
+    if file_path_max.strip():
+        df_max, err_max = _load_csv(file_path_max)
+        if err_max:
+            return err_max
+
+    value_cols: list[str] | None = None
+    if value_cols_json.strip():
+        try:
+            value_cols = json.loads(value_cols_json)
+        except json.JSONDecodeError as exc:
+            return f"[Error] Invalid JSON in value_cols_json: {exc}"
+
+    result = analyze_violation(
+        df,
+        label_col=label_col or None,
+        value_cols=value_cols,
+        analysis_type=analysis_type,
+        df_max=df_max,
+        mean_max_ratio_threshold=mean_max_ratio_threshold,
+        violation_threshold=violation_threshold,
+        frequency_threshold=frequency_threshold,
+        top_n=top_n,
+    )
+    title = f"VIOLATION ANALYSIS ({analysis_type.upper()}) — {Path(file_path).name}"
+    return _format_result(result, title)
 
 
 # ---------------------------------------------------------------------------

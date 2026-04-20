@@ -22,6 +22,7 @@ from psr.outputanalysismcp.dataframe_functions import (
     analyze_cross_correlation,
     analyze_heatmap,
     analyze_stagnation,
+    analyze_violation,
     filter_by_threshold,
     get_data_summary,
     get_dataframe_head,
@@ -127,6 +128,30 @@ def _wrap_get_summary(params: dict) -> dict:
     return get_data_summary(df, ops)
 
 
+def _wrap_analyze_violation(params: dict) -> dict:
+    df = read_csv_path(params["file_path"])
+
+    df_max = None
+    if params.get("file_path_max"):
+        df_max = read_csv_path(params["file_path_max"])
+
+    value_cols = params.get("value_cols")
+    if isinstance(value_cols, str) and value_cols:
+        value_cols = json.loads(value_cols)
+
+    return analyze_violation(
+        df,
+        label_col=params.get("label_col") or None,
+        value_cols=value_cols or None,
+        analysis_type=params.get("analysis_type", "frequency"),
+        df_max=df_max,
+        mean_max_ratio_threshold=float(params.get("mean_max_ratio_threshold", 0.8)),
+        violation_threshold=float(params.get("violation_threshold", 0.0)),
+        frequency_threshold=float(params.get("frequency_threshold", 0.5)),
+        top_n=int(params.get("top_n", 5)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
@@ -140,6 +165,7 @@ TOOL_DISPATCH: dict[str, object] = {
     "df_filter_above_threshold": _wrap_filter_threshold,
     "df_get_head":               _wrap_get_head,
     "df_get_summary":            _wrap_get_summary,
+    "df_analyze_violation":      _wrap_analyze_violation,
 }
 
 

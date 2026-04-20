@@ -2,11 +2,11 @@
 LangGraph StateGraph assembly for the SDDP diagnostic agent.
 
 Flow:
-  START → initialize → route_problem → execute_graph_node ──(loop)──┐
-                                               │                      │
-                                       (conclusion node)             ┘
-                                               ↓
-                              retrieve_documentation → synthesize_response → END
+  START → initialize → route_problem → verify_entry_point → execute_graph_node ──(loop)──┐
+                                                                    │                      │
+                                                            (conclusion node)             ┘
+                                                                    ↓
+                                               retrieve_documentation → synthesize_response → END
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from .nodes import (
     retrieve_documentation,
     route_problem,
     synthesize_response,
+    verify_entry_point,
 )
 from .state import AgentState
 from .tools.graph_loader import load_graph
@@ -67,6 +68,7 @@ def build_graph(skip_initialize: bool = False) -> object:
     # Register nodes
     workflow.add_node("initialize", initialize)
     workflow.add_node("route_problem", route_problem)
+    workflow.add_node("verify_entry_point", verify_entry_point)
     workflow.add_node("execute_graph_node", execute_graph_node)
     workflow.add_node("retrieve_documentation", retrieve_documentation)
     workflow.add_node("synthesize_response", synthesize_response)
@@ -79,7 +81,8 @@ def build_graph(skip_initialize: bool = False) -> object:
         workflow.add_edge("initialize", "route_problem")
 
     # Fixed edges
-    workflow.add_edge("route_problem", "execute_graph_node")
+    workflow.add_edge("route_problem", "verify_entry_point")
+    workflow.add_edge("verify_entry_point", "execute_graph_node")
     workflow.add_edge("retrieve_documentation", "synthesize_response")
     workflow.add_edge("synthesize_response", END)
 
