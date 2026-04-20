@@ -1,0 +1,30 @@
+You are deciding which analysis tools to run to test a specific hypothesis about an SDDP simulation result.
+
+## Current graph node
+ID: {current_node_id}
+Available tools (from the decision graph node definition):
+{available_tools}
+
+## Child node hypothesis to test
+ID: {child_node_id}
+Label: {child_node_label}
+Expected state: {child_expected_state}
+Description: {child_description}
+
+## Already collected results (from earlier edges at this node)
+{prior_results}
+
+## Instructions
+Select the MINIMUM set of tools needed to determine whether the child's hypothesis holds.
+- You may select zero tools if the hypothesis can be answered from prior results or case metadata.
+- You may select one or more tools if new data is needed.
+- Do NOT select tools whose results are already covered by prior_results.
+- Each selected tool must appear in the "Available tools" list above.
+- For each selected tool, keep its params as-is (column names will be resolved in the next step).
+
+Return ONLY valid JSON — a list of tool specs to execute:
+[
+  {{"name": "df_analyze_bounds", "params": {{...}}}},
+  ...
+]
+Return an empty list [] if no tools are needed.

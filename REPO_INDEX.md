@@ -37,9 +37,29 @@ mcp-psr-output-analysis/
 │   ├── sddp-diagnose.md       ← Skill de diagnóstico de casos SDDP
 │   └── repo-edit.md           ← Skill de edição deste repositório (esta skill)
 │
+├── sddp_agent/
+│   ├── agent.py               ← LangGraph StateGraph (wires all nodes)
+│   ├── state.py               ← AgentState TypedDict + SessionMemory
+│   ├── system_prompt.py       ← SDDP domain system prompt
+│   ├── __main__.py            ← Interactive REPL (python -m sddp_agent)
+│   ├── nodes/                 ← LangGraph node implementations
+│   │   ├── initialize.py      ← HTML→CSV export, catalog loading
+│   │   ├── router.py          ← query → problem_type via LLM
+│   │   ├── graph_navigator.py ← traversal: tool selection, col resolution, hypothesis
+│   │   ├── doc_retriever.py   ← Results.md keyword search at conclusion nodes
+│   │   └── synthesizer.py     ← final structured diagnosis
+│   ├── tools/
+│   │   ├── graph_loader.py    ← decision_graph.json loader + cache
+│   │   ├── catalog.py         ← _index.json helpers
+│   │   └── dataframe_tools.py ← wrappers calling dataframe_functions.py
+│   ├── prompts/               ← LLM prompt templates (.txt)
+│   ├── README.md              ← Agent usage documentation
+│   └── CLAUDE.md              ← AI-reusable context for this package
+│
 ├── REPO_INDEX.md              ← ESTE ARQUIVO. Mapa vivo do repositório.
 ├── TOOLS.md                   ← Referência de todas as MCP tools (formato tabela)
 ├── README.md                  ← Instalação e configuração do servidor
+├── .env                       ← API keys (não commitar — está no .gitignore)
 └── sddp_html_to_csv.py        ← Parser HTML → CSV para dashboards SDDP
 ```
 
@@ -279,3 +299,4 @@ node_solucao_erro               → node_checar_conflito_variaveis   (p3)
 | 2026-04-16 | `get_graph_entry_point`: fallback por busca de keywords + sumário 2 níveis da subárvore quando `problem_type` não bate exato | `server.py` |
 | 2026-04-16 | Critério de convergência explicitado: Zinf dentro de [Lower_CI, Upper_CI] = convergido (independente de igualar Zsup) | `decision-trees/decision_graph.json` |
 | 2026-04-16 | Skill atualizada: travessia incremental, avaliação sequencial de prioridades, `get_conclusion_documentation` obrigatório antes de responder | `skills/sddp-diagnose.md` |
+| 2026-04-20 | Criação do pacote `sddp_agent/`: agente LangGraph standalone com REPL interativo, sessão multi-turn e travessia por hipóteses | `sddp_agent/` |

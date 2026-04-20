@@ -1,0 +1,26 @@
+Classify the user's diagnostic question into exactly one SDDP problem type.
+
+## Available entry points
+{entry_points}
+
+## Case metadata
+{case_metadata}
+
+## Conversation history (for context)
+{conversation_history}
+
+## User question
+{user_query}
+
+## Classification rules
+- "problema_convergencia" → Zinf/Zsup gap not closing, convergence criterion not met,
+  too many iterations, cut count stagnation, policy did not converge
+- "deslocamento_custo" → simulation cost systematically differs from policy cost,
+  policy vs simulation mismatch, FCF copied from another case, non-convexities
+- "problema_simulacao" → simulation quality, penalty proportions, MIP solver status,
+  hourly simulation issues, ENA dispersion, operating cost dispersion, cost scatter
+
+When the question is ambiguous, prefer "problema_simulacao" for general quality questions.
+
+Return ONLY valid JSON (no markdown, no explanation outside the JSON):
+{{"problem_type": "<one of the three keys above>", "reasoning": "<one sentence>"}}

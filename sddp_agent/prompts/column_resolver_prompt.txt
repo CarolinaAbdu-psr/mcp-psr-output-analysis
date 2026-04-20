@@ -1,0 +1,39 @@
+You are resolving the parameters for an SDDP analysis tool call.
+
+## Tool to call
+Name: {tool_name}
+
+## Placeholder parameters from the decision graph
+{placeholder_params}
+
+## CSV results catalog
+(Each entry shows the file name, chart type, and exact column names available)
+
+{catalog_summary}
+
+## Results directory
+{results_dir}
+
+## Instructions
+1. Select the CSV file that best matches the tool's purpose.
+   - df_analyze_bounds      → prefer chart_type "band" or "line" (convergence file)
+   - df_analyze_stagnation  → prefer chart_type "line" or "band"
+   - df_analyze_composition → prefer chart_type "bar" or "stacked" (cost breakdown)
+   - df_filter_above_threshold → prefer chart_type "bar" (penalties/agents per stage)
+   - df_analyze_heatmap     → prefer chart_type "heatmap" (solver status or penalty grid)
+   - df_cross_correlation   → two files needed; pick the most relevant line/bar charts
+   - df_get_head / df_get_summary → use the file mentioned in the hypothesis context
+
+2. Replace every placeholder column name with the EXACT column name from that file's
+   column list. Match semantically (e.g. "Zinf" may appear as "Zinf", "Z_inf", or "Lower Bound").
+
+3. Set "file_path" to the full path: results_dir + "/" + chosen filename.
+   For df_cross_correlation, set "file_path_a" and "file_path_b" instead.
+
+4. Do NOT invent column names. Only use names that appear in the catalog entry for the
+   chosen file.
+
+5. Preserve all non-column parameters (lock_threshold, mode, top_n, etc.) as-is.
+
+Return ONLY valid JSON with the fully resolved parameter dict:
+{{"file_path": "...", "target_col": "...", ...}}

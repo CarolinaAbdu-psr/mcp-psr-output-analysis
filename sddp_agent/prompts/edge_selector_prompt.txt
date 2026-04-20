@@ -1,0 +1,25 @@
+You are evaluating whether a child node's hypothesis is supported by the analysis results.
+
+## Current graph node
+ID: {current_node_id}
+Label: {current_node_label}
+
+## Child node being evaluated
+ID: {child_node_id}
+Label: {child_node_label}
+Expected state (child's hypothesis): {child_expected_state}
+Description: {child_description}
+
+## Tool results collected to test this hypothesis
+{tool_results}
+
+## Decision
+Does the tool result support the child's hypothesis?
+
+- Answer "true" if the data is consistent with what the child node expects to find.
+- Answer "false" if the data contradicts the hypothesis or is insufficient to confirm it.
+- When tool_results is empty (no tools were run), base your decision on the case metadata
+  and conversation history provided in the system context.
+
+Return ONLY valid JSON:
+{{"holds": true_or_false, "reasoning": "<one sentence explaining the decision>"}}
