@@ -48,7 +48,9 @@ def _wrap_analyze_bounds(params: dict) -> dict:
 
 def _wrap_analyze_composition(params: dict) -> dict:
     df = read_csv_path(params["file_path"])
-    all_cols = params["all_cost_cols"]
+    all_cols = params.get("all_cost_cols") or params.get("all_cost_cols_json")
+    if not all_cols:
+        raise KeyError("all_cost_cols")
     if isinstance(all_cols, str):
         all_cols = json.loads(all_cols)
     return analyze_composition(
@@ -128,6 +130,24 @@ def _wrap_get_summary(params: dict) -> dict:
     return get_data_summary(df, ops)
 
 
+def _wrap_check_nonconvexity_policy(params: dict) -> dict:
+    import psr.factory  
+    case_path = params["case_path"]
+    study_settings = psr.factory.load_study_settings(case_path)
+    option = study_settings.get("NonConvexityRepresentationInPolicy")
+    if option == 0:
+        return {
+            "holds": True,
+            "NonConvexityRepresentationInPolicy": option,
+            "message": "Integralidade violada: NonConvexityRepresentationInPolicy=0 — não-convexidade não ativada na política.",
+        }
+    return {
+        "holds": False,
+        "NonConvexityRepresentationInPolicy": option,
+        "message": f"Opção ativada (NonConvexityRepresentationInPolicy={option}): sendo considerada na política. Rejeitar hipótese.",
+    }
+
+
 def _wrap_analyze_violation(params: dict) -> dict:
     df = read_csv_path(params["file_path"])
 
@@ -157,15 +177,16 @@ def _wrap_analyze_violation(params: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 TOOL_DISPATCH: dict[str, object] = {
-    "df_analyze_bounds":         _wrap_analyze_bounds,
-    "df_analyze_composition":    _wrap_analyze_composition,
-    "df_analyze_stagnation":     _wrap_analyze_stagnation,
-    "df_cross_correlation":      _wrap_cross_correlation,
-    "df_analyze_heatmap":        _wrap_analyze_heatmap,
-    "df_filter_above_threshold": _wrap_filter_threshold,
-    "df_get_head":               _wrap_get_head,
-    "df_get_summary":            _wrap_get_summary,
-    "df_analyze_violation":      _wrap_analyze_violation,
+    "df_analyze_bounds":             _wrap_analyze_bounds,
+    "df_analyze_composition":        _wrap_analyze_composition,
+    "df_analyze_stagnation":         _wrap_analyze_stagnation,
+    "df_cross_correlation":          _wrap_cross_correlation,
+    "df_analyze_heatmap":            _wrap_analyze_heatmap,
+    "df_filter_above_threshold":     _wrap_filter_threshold,
+    "df_get_head":                   _wrap_get_head,
+    "df_get_summary":                _wrap_get_summary,
+    "df_analyze_violation":          _wrap_analyze_violation,
+    "df_check_nonconvexity_policy":  _wrap_check_nonconvexity_policy,
 }
 
 

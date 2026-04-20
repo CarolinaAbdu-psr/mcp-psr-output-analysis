@@ -13,19 +13,30 @@ Description: {child_description}
 ## Case metadata (use when tool results are absent)
 {case_metadata}
 
+## Available CSV files in the case output folder
+{catalog_summary}
+
+Each entry shows: filename | chart_type | title | columns.
+Use this to check whether relevant data files exist even when no tools were run.
+
 ## Tool results collected to test this hypothesis
 {tool_results}
 
 ## Decision
 Does the evidence support the child's hypothesis?
 
-- Answer "true" if the data (or case metadata, when no tools were run) is consistent with
-  what the child node expects to find.
-- Answer "false" if the data contradicts the hypothesis or if nothing supports it.
-- When tool_results is "[]" (no tools ran for this child), base your decision ONLY on the
-  case metadata above. If the case metadata contains information that directly confirms or
-  refutes the hypothesis, use it. Otherwise return false so the fallback priority-1 path
-  is taken.
+Evaluate in this order:
+
+1. **Tool results available** (tool_results is not "[]"): base the decision primarily on
+   the tool data. Catalog and case metadata are supplementary.
+
+2. **No tools ran** (tool_results is "[]") — use the following instead:
+   a. Check the CSV catalog above: if it contains files whose names or titles suggest they
+      are relevant to the child's expected_state, treat that as positive evidence.
+   b. Check case_metadata: for hypotheses about binary variables or non-convexities,
+      look at the "Non-Convexities" key directly.
+   c. If both catalog and metadata are inconclusive, return false so the priority-1
+      fallback path is taken.
 
 Return ONLY valid JSON:
-{{"holds": true_or_false, "reasoning": "<one sentence explaining the decision>"}}
+{{"holds": true_or_false, "reasoning": "<one sentence citing which evidence drove the decision>"}}

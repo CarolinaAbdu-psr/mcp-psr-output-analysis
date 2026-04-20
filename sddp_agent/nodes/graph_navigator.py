@@ -175,9 +175,10 @@ def _hypothesis_holds(
     child_node: dict,
     tool_results: list[dict],
     case_metadata: dict | None = None,
+    csv_catalog: dict | None = None,
 ) -> bool:
     """
-    Ask the LLM whether the tool results (or case metadata, when no tools ran)
+    Ask the LLM whether the tool results, case metadata, or available CSV files
     support the child node's expected_state.
     Returns False on any parse error.
     """
@@ -186,6 +187,7 @@ def _hypothesis_holds(
         if case_metadata
         else "(not available)"
     )
+    catalog_text = build_catalog_summary(csv_catalog) if csv_catalog else "(not available)"
     prompt = _EDGE_SELECTOR_PROMPT.format(
         current_node_id="(parent)",
         current_node_label="",
@@ -194,6 +196,7 @@ def _hypothesis_holds(
         child_expected_state=child_node.get("content", {}).get("expected_state", ""),
         child_description=child_node.get("content", {}).get("description", ""),
         case_metadata=meta_text,
+        catalog_summary=catalog_text,
         tool_results=json.dumps(tool_results, indent=2) if tool_results else "[]",
     )
 
@@ -322,7 +325,7 @@ def execute_graph_node(state: dict) -> dict:
 
         # 3. Evaluate whether this child's hypothesis holds
         #    Pass case_metadata so the LLM can reason even when no tools were run
-        if _hypothesis_holds(child, edge_results, case_metadata=case_metadata):
+        if _hypothesis_holds(child, edge_results, case_metadata=case_metadata, csv_catalog=csv_catalog):
             selected_next_id = child["id"]
             _log.debug("  → FOLLOWING edge to: %s", selected_next_id)
             break

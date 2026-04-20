@@ -42,14 +42,12 @@
       },
       "tools": [
         {
-          "name": "df_analyze_bounds",
+          "name": "df_analyze_stagnation",
           "params": {
             "target_col": "Zinf",
-            "lower_bound_col": "Lower_CI",
-            "upper_bound_col": "Upper_CI",
-            "reference_val_col": "Zsup",
-            "iteration_col": "Iteration",
-            "lock_threshold": 0.005
+            "window_size": 5,
+            "cv_threshold": 1.0,
+            "slope_threshold": 0.01
           }
         }
       ]
@@ -76,14 +74,12 @@
       },
       "tools": [
         {
-          "name": "df_analyze_bounds",
+          "name": "df_analyze_stagnation",
           "params": {
             "target_col": "Zinf",
-            "lower_bound_col": "Lower_CI",
-            "upper_bound_col": "Upper_CI",
-            "reference_val_col": "Zsup",
-            "iteration_col": "Iteration",
-            "lock_threshold": 0.005
+            "window_size": 5,
+            "cv_threshold": 1.0,
+            "slope_threshold": 0.01
           }
         }
       ]
@@ -188,7 +184,20 @@
       "content": {
         "description": "Verificar se há diferença sistemática entre os custos calculados na simulação e na política. O deslocamento pode ser causado por variáveis binárias não respeitadas na simulação ou pelo uso de dados diferentes entre política e simulação.",
         "expected_state": "Identificar a origem do deslocamento para direcionar o diagnóstico ao caminho correto."
-      }
+      },
+      "tools": [
+        {
+          "name": "df_analyze_bounds",
+          "params": {
+            "target_col": "Zinf",
+            "lower_bound_col": "Lower_CI",
+            "upper_bound_col": "Upper_CI",
+            "reference_val_col": "Zsup",
+            "iteration_col": "Iteration",
+            "lock_threshold": 0.005
+          }
+        }
+      ]
     },
     {
       "id": "node_variaveis_binarias",
@@ -217,8 +226,16 @@
       "purpose": "Confirmar que a não-convexidade ativa na política não está sendo aplicada na simulação",
       "content": {
         "description": "Quando variáveis binárias existem na política mas a simulação não resolve o MIP, as decisões de despacho podem divergir, causando deslocamento de custos. A solução é ativar a não-convexidade também na fase de simulação.",
-        "expected_state": "Confirmar a divergência e recomendar ativação da não-convexidade na política de simulação."
-      }
+        "expected_state": "Confirmar que NonConvexityRepresentationInPolicy == 0 (não-convexidade não ativada na política). Se == 0, integralidade violada → seguir para node_ativar_nao_convexidade. Se != 0, opção ativada → rejeitar hipótese e seguir para node_estado_solucao_etapa_cenario."
+      },
+      "tools": [
+        {
+          "name": "df_check_nonconvexity_policy",
+          "params": {
+            "case_path": "<study_case_path>"
+          }
+        }
+      ]
     },
     {
       "id": "node_fcf_outro_caso",
@@ -567,6 +584,7 @@
     { "source": "node_dados_diferentes_politica", "target": "node_fcf_outro_caso", "priority": 1 },
 
     { "source": "node_integralidade_violada", "target": "node_ativar_nao_convexidade", "priority": 1 },
+    { "source": "node_integralidade_violada", "target": "node_estado_solucao_etapa_cenario", "priority": 2 },
 
     { "source": "node_simulacao", "target": "node_proporcao_custo_operativo_sim", "priority": 1 },
     { "source": "node_simulacao", "target": "node_dispersao_custos_ena", "priority": 3 },

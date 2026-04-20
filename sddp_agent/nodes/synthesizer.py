@@ -37,8 +37,6 @@ Produce a structured diagnosis in the user's language using this exact format:
 ```
 ## Diagnóstico: <conclusion node label>
 
-**Status:** OK | ALERTA | CRÍTICO
-
 ### O que os dados mostram
 <specific numeric values extracted from tool results — cite actual numbers>
 
@@ -46,7 +44,7 @@ Produce a structured diagnosis in the user's language using this exact format:
 <technical explanation based on the documentation content in the conclusion entries>
 
 ### Recomendação
-<corrective action — use **bold** if Status is CRÍTICO>
+<corrective action>
 
 ### Dados de Suporte
 | Métrica | Valor encontrado | Referência |
@@ -55,9 +53,6 @@ Produce a structured diagnosis in the user's language using this exact format:
 ```
 
 Rules:
-- Status is CRÍTICO when the diagnosed issue prevents correct operation.
-- Status is ALERTA when the issue degrades quality but the case is still usable.
-- Status is OK only if no real problem was found despite traversal.
 - Cite specific numbers from the tool_results — do not make up values.
 - If tool results contain errors ({{"error": "..."}}), acknowledge that data was unavailable
   for that metric and note it in the support table.

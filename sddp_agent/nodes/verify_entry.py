@@ -89,7 +89,7 @@ def verify_entry_point(state: dict) -> dict:
         all_verification_results.extend(entry_results)
 
         # Evaluate: does the data (or case_metadata for no-tool nodes) support this entry?
-        if _hypothesis_holds(entry_node, entry_results, case_metadata=case_metadata):
+        if _hypothesis_holds(entry_node, entry_results, case_metadata=case_metadata, csv_catalog=csv_catalog):
             _log.debug("[verify_entry] ✓ entry point confirmed: %s", entry_id)
             return {
                 "current_node_id": entry_id,
