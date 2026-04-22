@@ -17,6 +17,7 @@ from .dataframe_functions import (
     get_dataframe_head,
     get_data_summary,
     analyze_bounds_and_reference,
+    analyze_cmo_distribution,
     analyze_composition,
     analyze_stagnation,
     analyze_cross_correlation,
@@ -1189,6 +1190,135 @@ def df_analyze_violation(
     )
     title = f"VIOLATION ANALYSIS ({analysis_type.upper()}) — {Path(file_path).name}"
     return _format_result(result, title)
+
+
+@mcp.tool()
+def df_check_nonconvexity_policy(case_path: str) -> str:
+    """
+    Check whether non-convexity (integer variables) is active in the SDDP policy.
+
+    Reads the study settings from the case folder and inspects the
+    ``NonConvexityRepresentationInPolicy`` flag:
+
+    - **0** → non-convexity is NOT represented in the policy.
+      The policy ignores integer variables → integrality violation → hypothesis holds.
+    - **1 or higher** → non-convexity IS active in the policy.
+      The agent correctly accounts for binary variables → hypothesis does NOT hold.
+
+    Use this tool instead of reading a CSV file — it queries the case settings
+    directly and does not require a results CSV.
+
+    Args:
+        case_path: Absolute path to the SDDP case folder (parent of the
+                   ``results/`` directory).
+                   Example: if results are at ``/cases/caso_base/results``,
+                   pass ``/cases/caso_base``.
+
+    Returns:
+        Formatted text block with the flag value, a plain-language verdict,
+        and the diagnostic implication.
+    """
+    try:
+        study_settings = psr.factory.load_study_settings(case_path)
+    except Exception as exc:
+        return f"[Error] Could not load study settings from '{case_path}': {exc}"
+
+    option = study_settings.get("NonConvexityRepresentationInPolicy")
+
+    lines = [
+        f"=== NON-CONVEXITY POLICY CHECK — {Path(case_path).name} ===",
+        "",
+        f"NonConvexityRepresentationInPolicy : {option}",
+        "",
+    ]
+
+    if option == 0:
+        lines += [
+            "Verdict : VIOLATION — non-convexity is NOT represented in the policy.",
+            "",
+            "Implication: The policy phase ignores integer/binary variables.",
+            "This causes integrality violation: decisions that should be binary",
+            "are treated as continuous, potentially inflating costs or masking infeasibilities.",
+            "",
+            "Recommendation: Enable non-convexity in the policy settings if the model",
+            "has thermal units with minimum load constraints or commitment variables.",
+        ]
+    else:
+        lines += [
+            f"Verdict : OK — non-convexity IS active in the policy (value={option}).",
+            "",
+            "Implication: The policy correctly accounts for integer/binary variables.",
+            "This hypothesis is rejected — seek another root cause for the observed issue.",
+        ]
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def df_analyze_cmo(
+    file_path: str,
+    label_col: str = "",
+    value_cols_json: str = "",
+    zero_tolerance: float = 0.01,
+    top_n: int = 10,
+) -> str:
+    """
+    Analyse CMO (marginal operating cost) distribution across stages and scenarios.
+
+    The CSV must have multiple rows per stage — one row per scenario — with
+    system/bus columns holding the CMO values.  A typical file looks like:
+
+        Etapas  | Peru  | Bolivia
+        2024-01 | 30.4  | 28.1
+        2024-01 | 30.7  | 28.9
+        2024-02 |  0.0  | 31.2
+        ...
+
+    Returns three analyses in a single call:
+
+    **Zero detection** — stages and systems where CMO ≈ 0 (|v| ≤ zero_tolerance).
+        Indicates supply surplus: generation exceeds demand at zero marginal cost.
+
+    **Negative detection** — stages and systems where CMO < 0.
+        Signals excess generation with spillage or must-run penalties forcing the
+        model to pay to dispatch.
+
+    **Dispersion** — coefficient of variation (CV) of CMO per stage across scenarios.
+        High CV reveals price volatility driven by hydrological uncertainty (ENA range).
+
+    Use this tool for CMO-related diagnostic questions: zero prices, negative prices,
+    or high scenario-to-scenario price variability.
+
+    Args:
+        file_path:       Absolute path to the CMO CSV file.
+        label_col:       Column that identifies the stage / time period
+                         (e.g. "Etapas"). Leave empty to use row index.
+        value_cols_json: JSON array of system CMO columns to analyse.
+                         Leave empty to auto-detect all numeric columns.
+                         Example: '["Peru", "Bolivia"]'
+        zero_tolerance:  Absolute value below which CMO is treated as zero.
+                         Default 0.01 (unit-agnostic).
+        top_n:           Maximum entries in ranked lists. Default 10.
+    """
+    df, err = _load_csv(file_path)
+    if err:
+        return err
+
+    value_cols: list[str] | None = None
+    if value_cols_json.strip():
+        try:
+            value_cols = json.loads(value_cols_json)
+        except json.JSONDecodeError as exc:
+            return f"[Error] Invalid JSON in value_cols_json: {exc}"
+
+    result = analyze_cmo_distribution(
+        df,
+        label_col=label_col or None,
+        value_cols=value_cols,
+        zero_tolerance=zero_tolerance,
+        top_n=top_n,
+    )
+    return _format_result(result, f"CMO DISTRIBUTION ANALYSIS — {Path(file_path).name}")
 
 
 # ---------------------------------------------------------------------------

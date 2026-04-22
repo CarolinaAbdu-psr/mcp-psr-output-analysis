@@ -1267,3 +1267,160 @@ def analyze_violation(
             )
         }
 
+
+# ---------------------------------------------------------------------------
+# CMO (Marginal Cost) distribution analysis
+# ---------------------------------------------------------------------------
+
+def analyze_cmo_distribution(
+    df: pd.DataFrame,
+    label_col: str | None = None,
+    value_cols: list[str] | None = None,
+    zero_tolerance: float = 0.01,
+    top_n: int = 10,
+) -> dict:
+    """
+    Analyse CMO (marginal operating cost) distribution across stages and scenarios.
+
+    The input DataFrame has multiple rows per stage (one row per scenario):
+
+        Etapas  | System_A | System_B
+        2024-01 |   30.4   |   28.1
+        2024-01 |   30.7   |   28.9
+        2024-02 |    0.0   |   31.2
+        ...
+
+    Three complementary analyses are returned in a single call:
+
+    **Zero detection** — stages/systems where CMO ≈ 0 (|v| ≤ zero_tolerance).
+        A high proportion of near-zero values signals supply surplus.
+
+    **Negative detection** — stages/systems where CMO < 0 (strictly below zero).
+        Negative marginal costs occur when the model penalises excess generation.
+
+    **Dispersion** — coefficient of variation (CV) of CMO per stage across scenarios.
+        High CV signals price volatility driven by hydrological uncertainty.
+
+    Args:
+        df:             DataFrame with one row per (stage, scenario) pair.
+        label_col:      Column identifying the stage / time period (e.g. "Etapas").
+        value_cols:     CMO columns (one per system). Auto-detects numeric cols if None.
+        zero_tolerance: Absolute threshold below which a CMO is treated as zero.
+                        Default 0.01.
+        top_n:          Maximum entries in ranked lists. Default 10.
+
+    Returns:
+        Dict with: overall_stats, findings, top_zero_stages,
+        top_negative_stages, top_dispersed_stages.
+    """
+    if df.empty:
+        return {"error": "DataFrame is empty"}
+
+    if value_cols is None:
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        value_cols = [c for c in numeric_cols if c != label_col]
+
+    if not value_cols:
+        return {"error": "No numeric value columns found. Specify value_cols explicitly."}
+
+    overall_stats: dict = {}
+    for col in value_cols:
+        vals  = df[col].astype(float)
+        total = len(vals)
+        n_zero = int((vals.abs() <= zero_tolerance).sum())
+        n_neg  = int((vals < -zero_tolerance).sum())
+        overall_stats[col] = {
+            "total_values":   total,
+            "mean":           round(float(vals.mean()), 4),
+            "std":            round(float(vals.std()), 4),
+            "min":            round(float(vals.min()), 4),
+            "max":            round(float(vals.max()), 4),
+            "zero_count":     n_zero,
+            "zero_pct":       round(n_zero / total * 100, 2) if total > 0 else 0.0,
+            "negative_count": n_neg,
+            "negative_pct":   round(n_neg / total * 100, 2) if total > 0 else 0.0,
+        }
+
+    has_zeros     = any(v["zero_count"]     > 0 for v in overall_stats.values())
+    has_negatives = any(v["negative_count"] > 0 for v in overall_stats.values())
+
+    per_stage: list[dict] = []
+    if label_col and label_col in df.columns:
+        for stage, group in df.groupby(label_col, sort=False):
+            total_zero = 0
+            total_neg  = 0
+            cv_values: list[float] = []
+            systems: dict = {}
+
+            for col in value_cols:
+                vals   = group[col].astype(float)
+                n      = len(vals)
+                mean_v = float(vals.mean())
+                std_v  = float(vals.std()) if n > 1 else 0.0
+                cv     = (std_v / abs(mean_v) * 100) if mean_v != 0 else 0.0
+                n_zero = int((vals.abs() <= zero_tolerance).sum())
+                n_neg  = int((vals < -zero_tolerance).sum())
+
+                total_zero += n_zero
+                total_neg  += n_neg
+                cv_values.append(cv)
+
+                systems[col] = {
+                    "mean":           round(mean_v, 4),
+                    "std":            round(std_v, 4),
+                    "cv_pct":         round(cv, 2),
+                    "min":            round(float(vals.min()), 4),
+                    "max":            round(float(vals.max()), 4),
+                    "zero_count":     n_zero,
+                    "negative_count": n_neg,
+                }
+
+            per_stage.append({
+                "stage":                stage,
+                "n_scenarios":          len(group),
+                "total_zero_count":     total_zero,
+                "total_negative_count": total_neg,
+                "mean_cv_pct":          round(float(np.mean(cv_values)), 2) if cv_values else 0.0,
+                "systems":              systems,
+            })
+
+    zero_stages  = sorted([s for s in per_stage if s["total_zero_count"] > 0],
+                          key=lambda s: s["total_zero_count"], reverse=True)[:top_n]
+    neg_stages   = sorted([s for s in per_stage if s["total_negative_count"] > 0],
+                          key=lambda s: s["total_negative_count"], reverse=True)[:top_n]
+    disp_stages  = sorted(per_stage, key=lambda s: s["mean_cv_pct"], reverse=True)[:top_n]
+
+    def _sys_zero(s: dict) -> dict:
+        return {c: {"zero_count": s["systems"][c]["zero_count"], "mean": s["systems"][c]["mean"]}
+                for c in value_cols if c in s["systems"]}
+
+    def _sys_neg(s: dict) -> dict:
+        return {c: {"negative_count": s["systems"][c]["negative_count"], "min": s["systems"][c]["min"]}
+                for c in value_cols if c in s["systems"]}
+
+    def _sys_disp(s: dict) -> dict:
+        return {c: {"cv_pct": s["systems"][c]["cv_pct"],
+                    "mean":   s["systems"][c]["mean"],
+                    "std":    s["systems"][c]["std"]}
+                for c in value_cols if c in s["systems"]}
+
+    return {
+        "overall_stats": overall_stats,
+        "findings": {
+            "has_zero_values":     has_zeros,
+            "has_negative_values": has_negatives,
+            "zero_tolerance_used": zero_tolerance,
+        },
+        "top_zero_stages": [
+            {"stage": s["stage"], "total_zero_count": s["total_zero_count"], "systems": _sys_zero(s)}
+            for s in zero_stages
+        ],
+        "top_negative_stages": [
+            {"stage": s["stage"], "total_negative_count": s["total_negative_count"], "systems": _sys_neg(s)}
+            for s in neg_stages
+        ],
+        "top_dispersed_stages": [
+            {"stage": s["stage"], "mean_cv_pct": s["mean_cv_pct"], "systems": _sys_disp(s)}
+            for s in disp_stages
+        ],
+    }

@@ -1,0 +1,85 @@
+You are selecting AND fully resolving SDDP analysis tools for a single decision-tree hypothesis test.
+In ONE step you must: choose which tools to run AND provide their fully-resolved parameters (real file paths and real column names).
+
+## Parent graph node (context only)
+ID: {current_node_id}
+
+## Case metadata (extracted from SDDP case information)
+{case_metadata}
+
+## Child node hypothesis to test
+ID: {child_node_id}
+Label: {child_node_label}
+Expected state: {child_expected_state}
+Description: {child_description}
+
+## Tools available for this child node
+{available_tools}
+
+## Results already collected at this node (earlier edges tested)
+{prior_results}
+
+## CSV results catalog
+(Each entry: filename, chart_type, title, rows, exact column names available)
+
+{catalog_summary}
+
+## Results directory
+{results_dir}
+
+## Instructions
+
+### Step 1 — Tool selection
+Select the MINIMUM set of tools needed to test the child's hypothesis.
+Return [] if:
+- prior_results already contain enough data to evaluate this hypothesis, OR
+- the hypothesis can be decided directly from case_metadata (e.g., checking Non-Convexities section).
+
+### Step 2 — Parameter resolution (for each selected tool)
+For each selected tool, resolve ALL parameters to their final values:
+
+**File selection rules:**
+- df_analyze_bounds / df_analyze_stagnation  → chart_type "band" or "line" (convergence file)
+- df_analyze_composition / df_filter_above_threshold → chart_type "bar" or "stacked" (cost breakdown)
+- df_analyze_heatmap → chart_type "heatmap" (solver status or penalty grid)
+- df_cross_correlation → two files; pick the most relevant line/bar charts
+- df_analyze_violation → file whose name or title contains "violação", "violation", "déficit", "deficit"
+  Set "file_path" to the mean/average violations file.
+  If analysis_type is "mean_vs_max" AND a separate max-violations file exists, set "file_path_max" too.
+  If only one violations file exists, use it for both.
+- df_analyze_cmo → file whose name or title contains "marginal", "CMO", "costo marginal", "custo marginal"
+- df_get_head / df_get_summary → use the most relevant file for the hypothesis context
+- df_check_nonconvexity_policy → NO CSV file needed. Set ONLY "case_path" = parent dir of results_dir.
+  Example: if results_dir is "/cases/caso_base/results", set case_path to "/cases/caso_base".
+
+**Column resolution rules:**
+- Replace EVERY placeholder column name with the EXACT column name found in the chosen file's catalog entry.
+- Match semantically: "Zinf" may appear as "Zinf", "Z inf", "Lower Bound", etc.
+- Do NOT invent column names. Only use names explicitly listed in the catalog for the chosen file.
+- Preserve all non-column parameters exactly as-is (lock_threshold, mode, top_n, analysis_type, direction, zero_tolerance, etc.).
+
+**Path rules:**
+- Always set "file_path" = results_dir + "/" + chosen filename (full absolute path).
+- For df_cross_correlation: set "file_path_a" and "file_path_b" instead of "file_path".
+- Exception: df_check_nonconvexity_policy uses only "case_path" — omit "file_path" entirely.
+
+## Output format
+Return ONLY valid JSON — a list of fully-resolved tool specs.
+Each item must have "name" and "params" with ALL parameters resolved (real file paths, real column names):
+
+[
+  {
+    "name": "df_analyze_bounds",
+    "params": {
+      "file_path": "/absolute/path/to/file.csv",
+      "target_col": "Zinf",
+      "lower_bound_col": "Zsup +- Tol (low)",
+      "upper_bound_col": "Zsup +- Tol (high)",
+      "reference_val_col": "Zsup",
+      "iteration_col": "Iteration",
+      "lock_threshold": 0.005
+    }
+  }
+]
+
+Return an empty list [] if no tools are needed.

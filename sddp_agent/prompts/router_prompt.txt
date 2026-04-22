@@ -21,12 +21,15 @@ Classify the user's diagnostic question and rank ALL entry points by relevance.
   hourly simulation issues, ENA dispersion, operating cost dispersion, cost scatter
 - "violacao" → violations, penalties too high/low, constraint breaches, infeasibility,
   soft constraint calibration, mean vs max violations, seasonal violations, constraint conflict
+- "cmo" → marginal operating cost (CMO/CMg/LMP), zero prices, negative prices, supply surplus,
+  price volatility, price dispersion across scenarios, spillage penalties driving CMO negative
 
 When the question is ambiguous, prefer "problema_simulacao" for general quality questions.
 When the question mentions violations, penalties (not convergence-related), or soft constraints, use "violacao".
+When the question mentions marginal costs, zero prices, or price volatility across scenarios, use "cmo".
 
 ## Output format
 Return ONLY valid JSON (no markdown, no explanation outside the JSON).
 "entry_point_ranking" must contain ALL node IDs ordered from most to least relevant:
 
-{{"problem_type": "<one of the four keys above>", "entry_point_ranking": ["<most_relevant_node_id>", "<second_node_id>", ...], "reasoning": "<one sentence>"}}
+{{"problem_type": "<one of the five keys above>", "entry_point_ranking": ["<most_relevant_node_id>", "<second_node_id>", ...], "reasoning": "<one sentence>"}}

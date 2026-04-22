@@ -5,7 +5,8 @@
     "problema_convergencia": "node_root_nao_convergencia",
     "deslocamento_custo": "node_deslocamento_custo_sim_politica",
     "problema_simulacao": "node_simulacao",
-    "violacao": "node_violacao"
+    "violacao": "node_violacao",
+    "cmo": "node_cmo_root"
   },
   "nodes": [
     {
@@ -561,7 +562,120 @@
         "search_intent": "Conflito restrições incompatíveis violação inevitável geração mínima inviabilidade",
         "top_k": 2
       }
+    },
+    {
+    "id": "node_cmo_root",
+    "type": "analysis",
+    "label": "CMO",
+    "purpose": "Analisar o Custo Marginal de Operação para identificar condições de oferta e volatilidade",
+    "content": {
+      "description": "Ponto de entrada para análise do comportamento do CMO nos diferentes cenários energéticos.",
+      "expected_state": "Análise da distribuição dos valores de CMO para direcionar o diagnóstico de excesso de oferta ou dispersão."
+    },
+    "tools": [
+      {
+        "name": "df_analyze_cmo",
+        "params": {
+          "label_col": "Etapas",
+          "zero_tolerance": 0.01,
+          "top_n": 10
+        }
+      }
+    ]
+  },
+  {
+    "id": "node_cmo_zero",
+    "type": "analysis",
+    "label": "CMO = 0",
+    "purpose": "Identificar situações de custo marginal nulo",
+    "content": {
+      "description": "Verifica onde o custo marginal de operação atinge o limite inferior de zero.",
+      "expected_state": "Frequência alta de valores nulos indica saturação de oferta."
+    },
+    "tools": [
+      {
+        "name": "df_analyze_cmo",
+        "params": {
+          "label_col": "Etapas",
+          "zero_tolerance": 0.01,
+          "top_n": 10
+        }
+      }
+    ]
+  },
+  {
+    "id": "node_cmo_negativo",
+    "type": "analysis",
+    "label": "CMO negativo",
+    "purpose": "Identificar situações de custo marginal negativo",
+    "content": {
+      "description": "Verifica a ocorrência de CMO abaixo de zero, geralmente vinculado a restrições operacionais severas ou vertimento penalizado.",
+      "expected_state": "Valores < 0 indicam que o sistema está pagando para não gerar ou sofrendo penalidades de excesso."
+    },
+    "tools": [
+      {
+        "name": "df_analyze_cmo",
+        "params": {
+          "label_col": "Etapas",
+          "zero_tolerance": 0.01,
+          "top_n": 10
+        }
+      }
+    ]
+  },
+  {
+    "id": "node_dispersao_cmo",
+    "type": "analysis",
+    "label": "Dispersão do CMO",
+    "purpose": "Avaliar a variabilidade do CMO em relação aos cenários",
+    "content": {
+      "description": "Analisa como o CMO se comporta frente às variações de ENA (Energia Natural Afluente) nos cenários.",
+      "expected_state": "Alta correlação negativa ou dispersão elevada sugere sensibilidade excessiva aos cenários."
+    },
+    "tools": [
+      {
+        "name": "df_analyze_cmo",
+        "params": {
+          "label_col": "Etapas",
+          "zero_tolerance": 0.01,
+          "top_n": 10
+        }
+      }
+    ]
+  },
+  {
+    "id": "node_concl_excesso_oferta",
+    "type": "conclusion",
+    "label": "Excesso de oferta",
+    "purpose": "Diagnosticar saturação do sistema",
+    "documentation": {
+      "retrieval_strategy": "similarity",
+      "search_intent": "Excesso oferta energia CMO zero custo marginal nulo saturação geração renovável",
+      "top_k": 2
     }
+  },
+  {
+    "id": "node_concl_excesso_penalidade",
+    "type": "conclusion",
+    "label": "Excesso de oferta + penalidade de vertimento",
+    "purpose": "Diagnosticar impacto de penalidades em cenários de excesso",
+    "documentation": {
+      "retrieval_strategy": "similarity",
+      "search_intent": "CMO negativo penalidade vertimento excesso oferta custo marginal negativo geração must-run",
+      "top_k": 2
+    }
+  },
+  {
+    "id": "node_concl_volatilidade_alta",
+    "type": "conclusion",
+    "label": "Volatilidade alta dos preços em relação aos cenários",
+    "purpose": "Diagnosticar instabilidade de preços",
+    "documentation": {
+      "retrieval_strategy": "similarity",
+      "search_intent": "Volatilidade preços CMO dispersão cenários incerteza hidrológica ENA custo marginal variação",
+      "top_k": 2
+    }
+  }
   ],
   "edges": [
     { "source": "node_root_nao_convergencia", "target": "node_zinf_aproximando_zsup", "priority": 2 },
@@ -618,7 +732,15 @@
     { "source": "node_media_proxima_maxima",       "target": "node_penalidade_mal_calibrada_geral",   "priority": 1 },
     { "source": "node_violacao_frequente",          "target": "node_penalidade_mal_calibrada_geral",   "priority": 1 },
     { "source": "node_sazonalidade_violacao",       "target": "node_penalidade_mal_calibrada_periodo", "priority": 1 },
-    { "source": "node_conflito_restricoes_analise", "target": "node_conflito_restricoes_conclusao",    "priority": 1 }
+    { "source": "node_conflito_restricoes_analise", "target": "node_conflito_restricoes_conclusao",    "priority": 1 },
+
+    { "source": "node_cmo_root", "target": "node_cmo_zero", "priority": 1 },
+    { "source": "node_cmo_root", "target": "node_cmo_negativo", "priority": 2 },
+    { "source": "node_cmo_root", "target": "node_dispersao_cmo", "priority": 3 },
+    
+    { "source": "node_cmo_zero", "target": "node_concl_excesso_oferta", "priority": 1 },
+    { "source": "node_cmo_negativo", "target": "node_concl_excesso_penalidade", "priority": 1 },
+    { "source": "node_dispersao_cmo", "target": "node_concl_volatilidade_alta", "priority": 1 }
   ]
 }
 

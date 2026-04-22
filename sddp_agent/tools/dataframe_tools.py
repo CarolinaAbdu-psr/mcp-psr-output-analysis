@@ -18,6 +18,7 @@ from pathlib import Path
 from psr.outputanalysismcp.common import read_csv_path
 from psr.outputanalysismcp.dataframe_functions import (
     analyze_bounds_and_reference,
+    analyze_cmo_distribution,
     analyze_composition,
     analyze_cross_correlation,
     analyze_heatmap,
@@ -148,6 +149,20 @@ def _wrap_check_nonconvexity_policy(params: dict) -> dict:
     }
 
 
+def _wrap_analyze_cmo(params: dict) -> dict:
+    df = read_csv_path(params["file_path"])
+    value_cols = params.get("value_cols")
+    if isinstance(value_cols, str) and value_cols:
+        value_cols = json.loads(value_cols)
+    return analyze_cmo_distribution(
+        df,
+        label_col=params.get("label_col") or None,
+        value_cols=value_cols or None,
+        zero_tolerance=float(params.get("zero_tolerance", 0.01)),
+        top_n=int(params.get("top_n", 10)),
+    )
+
+
 def _wrap_analyze_violation(params: dict) -> dict:
     df = read_csv_path(params["file_path"])
 
@@ -187,6 +202,7 @@ TOOL_DISPATCH: dict[str, object] = {
     "df_get_summary":                _wrap_get_summary,
     "df_analyze_violation":          _wrap_analyze_violation,
     "df_check_nonconvexity_policy":  _wrap_check_nonconvexity_policy,
+    "df_analyze_cmo":                _wrap_analyze_cmo,
 }
 
 

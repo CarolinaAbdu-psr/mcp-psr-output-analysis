@@ -22,6 +22,7 @@ def build_catalog_summary(csv_catalog: dict[str, dict], tool_name: str = "") -> 
         "df_cross_correlation":     ["line", "bar"],
         "df_get_head":              [],
         "df_get_summary":           [],
+        "df_analyze_cmo":           ["line", "band", "bar"],
     }
     preferred_types = relevance_hints.get(tool_name, [])
 
@@ -53,6 +54,7 @@ def find_file_for_tool(csv_catalog: dict[str, dict], tool_name: str) -> str | No
         "df_analyze_composition":   ["bar", "stacked"],
         "df_filter_above_threshold": ["bar", "stacked"],
         "df_analyze_heatmap":       ["heatmap"],
+        "df_analyze_cmo":           ["line", "band", "bar"],
     }
     preferred = type_priority.get(tool_name, [])
     for ptype in preferred:

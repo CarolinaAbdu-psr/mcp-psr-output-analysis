@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
+import os
+
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..system_prompt import SYSTEM_PROMPT
@@ -23,8 +25,9 @@ _PROMPT_PATH = Path(__file__).parents[1] / "prompts" / "router_prompt.txt"
 _ROUTER_PROMPT = _PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def _get_llm() -> ChatOpenAI:
-    return ChatOpenAI(model_name="gpt-4.1", max_tokens=256, temperature=0.4)
+def _get_llm() -> ChatAnthropic:
+    model = os.environ.get("SDDP_AGENT_MODEL", "claude-sonnet-4-6")
+    return ChatAnthropic(model=model, max_tokens=256, temperature=0.4)  # type: ignore[call-arg]
 
 
 def route_problem(state: dict) -> dict:
