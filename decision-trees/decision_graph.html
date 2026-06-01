@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Grafo de Decisão — flow_decisao_001 v1.1</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0F172A;
+    color: #E2E8F0;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── header ──────────────────────────────────────────────────────────── */
+  header {
+    background: #1E293B;
+    padding: 10px 18px;
+    border-bottom: 1px solid #334155;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+  header h1 { font-size: 1rem; font-weight: 600; color: #F1F5F9; }
+  header .meta { font-size: 0.75rem; color: #94A3B8; }
+  .ep-area { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+  .ep-label { font-size: 0.72rem; color: #94A3B8; }
+  .ep-badge {
+    font-size: 0.72rem; padding: 3px 9px; border-radius: 12px;
+    background: #F59E0B; color: #1C1917; cursor: pointer; font-weight: 600;
+    transition: opacity .15s;
+  }
+  .ep-badge:hover { opacity: .8; }
+
+  /* ── layout principal ─────────────────────────────────────────────────── */
+  .main {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ── wrapper relativo do grafo ────────────────────────────────────────── */
+  .cy-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* ── grafo: ocupa todo o wrapper via posicionamento absoluto ──────────── */
+  #cy {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #0F172A;
+  }
+
+  /* ── painel lateral ───────────────────────────────────────────────────── */
+  #panel {
+    width: 360px;
+    background: #1E293B;
+    border-left: 1px solid #334155;
+    overflow-y: auto;
+    padding: 18px;
+    transition: width .2s;
+    flex-shrink: 0;
+  }
+  #panel.hidden { width: 0; padding: 0; overflow: hidden; }
+
+  .panel-placeholder {
+    color: #475569;
+    font-size: 0.9rem;
+    text-align: center;
+    margin-top: 60px;
+  }
+
+  .detail-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #F1F5F9;
+    margin-bottom: 8px;
+    line-height: 1.35;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 8px;
+    margin: 2px;
+    background: #334155;
+    color: #CBD5E1;
+  }
+  .entry-tag { background: #B45309; color: #FEF3C7; }
+
+  .detail-section {
+    margin-top: 12px;
+    font-size: 0.82rem;
+    color: #CBD5E1;
+  }
+  .detail-section strong { color: #F1F5F9; font-size: 0.78rem; display: block; margin-bottom: 4px; }
+  .detail-section p { line-height: 1.55; color: #94A3B8; }
+
+  .expected-box {
+    background: #0F172A;
+    border-left: 3px solid #3B82F6;
+    padding: 8px 10px;
+    border-radius: 0 6px 6px 0;
+  }
+  .expected-box p { color: #CBD5E1; }
+
+  .doc-box {
+    background: #0F172A;
+    border-left: 3px solid #10B981;
+    padding: 8px 10px;
+    border-radius: 0 6px 6px 0;
+  }
+
+  .tool-card {
+    background: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-top: 6px;
+  }
+  .tool-name { font-weight: 600; color: #38BDF8; margin-bottom: 6px; font-size: 0.8rem; }
+  .param-table { width: 100%; border-collapse: collapse; font-size: 0.74rem; }
+  .param-table td { padding: 2px 4px; vertical-align: top; }
+  .param-key { color: #7DD3FC; width: 45%; word-break: break-word; }
+  .param-val { color: #CBD5E1; }
+
+  /* ── legenda ──────────────────────────────────────────────────────────── */
+  .legend {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    background: rgba(30,41,59,.92);
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.72rem;
+    pointer-events: none;
+  }
+  .legend-title { font-weight: 700; margin-bottom: 7px; color: #F1F5F9; }
+  .legend-row { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+  .legend-dot {
+    width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  }
+  .legend-line {
+    width: 22px; height: 3px; border-radius: 2px; flex-shrink: 0;
+  }
+
+  /* ── toolbar ──────────────────────────────────────────────────────────── */
+  .toolbar {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .tb-btn {
+    background: #1E293B;
+    border: 1px solid #334155;
+    color: #E2E8F0;
+    border-radius: 6px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background .15s;
+  }
+  .tb-btn:hover { background: #334155; }
+
+  #panel {
+    scrollbar-width: thin;
+    scrollbar-color: #334155 transparent;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Grafo de Decisão SDDP</h1>
+    <div class="meta">flow_decisao_001 &nbsp;·&nbsp; v1.1 &nbsp;·&nbsp;
+      41 nós &nbsp;·&nbsp; 43 arestas</div>
+  </div>
+  <div class="ep-area">
+    <span class="ep-label">Pontos de entrada →</span>
+    <span class="ep-badge" onclick="focusNode('node_root_nao_convergencia')">problema_convergencia</span><span class="ep-badge" onclick="focusNode('node_deslocamento_custo_sim_politica')">deslocamento_custo</span><span class="ep-badge" onclick="focusNode('node_simulacao')">problema_simulacao</span><span class="ep-badge" onclick="focusNode('node_violacao')">violacao</span><span class="ep-badge" onclick="focusNode('node_cmo_root')">cmo</span>
+  </div>
+</header>
+
+<div class="main">
+  <div class="cy-wrapper">
+    <div id="cy"></div>
+
+    <!-- legenda -->
+    <div class="legend">
+      <div class="legend-title">Legenda</div>
+      <div class="legend-row"><div class="legend-dot" style="background:#F59E0B"></div>Ponto de entrada</div>
+      <div class="legend-row"><div class="legend-dot" style="background:#3B82F6"></div>Nó de análise</div>
+      <div class="legend-row"><div class="legend-dot" style="background:#10B981"></div>Conclusão</div>
+      <div style="border-top:1px solid #334155; margin:7px 0"></div>
+      <div class="legend-row"><div class="legend-line" style="background:#EF4444"></div>Prioridade 1</div>
+      <div class="legend-row"><div class="legend-line" style="background:#F97316"></div>Prioridade 2</div>
+      <div class="legend-row"><div class="legend-line" style="background:#EAB308"></div>Prioridade 3</div>
+      <div class="legend-row"><div class="legend-line" style="background:#6B7280"></div>Prioridade 4+</div>
+    </div>
+
+    <!-- toolbar -->
+    <div class="toolbar">
+      <button class="tb-btn" onclick="cy.fit()">⊡ Fit</button>
+      <button class="tb-btn" onclick="cy.zoom(cy.zoom()*1.3); cy.center()">＋</button>
+      <button class="tb-btn" onclick="cy.zoom(cy.zoom()*.77); cy.center()">－</button>
+      <button class="tb-btn" onclick="relayout()">↺ Layout</button>
+      <button class="tb-btn" onclick="togglePanel()">☰ Painel</button>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div class="panel-placeholder">Clique em um nó<br>para ver os detalhes</div>
+  </div>
+</div>
+
+<script>
+// ── dados do grafo ────────────────────────────────────────────────────────────
+const nodeDetails = {
+  "node_root_nao_convergencia": '<h2 class="detail-title">Não convergência na política</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Ponto de entrada:</strong> <span class="tag entry-tag">problema_convergencia</span></div><div class="detail-section"><strong>Objetivo:</strong><p>Ponto de entrada para falha de convergência</p></div><div class="detail-section"><strong>Descrição:</strong><p>Avalia se o caso convergiu. CRITÉRIO CORRETO: convergência é atingida quando Zinf entra dentro do intervalo de confiança [Lower_CI, Upper_CI] do Zsup — não é necessário que Zinf iguale exatamente o Zsup. Se na última iteração o valor de Zinf já está dentro desse intervalo, o caso convergiu.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se Zinf estiver DENTRO do intervalo [Lower_CI, Upper_CI] na última iteração → caso CONVERGIU: interrompa a análise e informe resultado positivo. Se Zinf estiver FORA do intervalo → caso NÃO convergiu: siga para as próximas etapas.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_bounds</div><table class="param-table"><tr><td class="param-key">target_col</td><td class="param-val">Zinf</td></tr><tr><td class="param-key">lower_bound_col</td><td class="param-val">Lower_CI</td></tr><tr><td class="param-key">upper_bound_col</td><td class="param-val">Upper_CI</td></tr><tr><td class="param-key">reference_val_col</td><td class="param-val">Zsup</td></tr><tr><td class="param-key">iteration_col</td><td class="param-val">Iteration</td></tr><tr><td class="param-key">lock_threshold</td><td class="param-val">0.005</td></tr></table></div></div>',
+  "node_zinf_aproximando_zsup": '<h2 class="detail-title">Zinf está se aproximando do intervalo de confiança do Zsup</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar proximidade dos limites</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verificar se Zinf está em trajetória de aproximação do intervalo de confiança, mesmo sem tê-lo atingido ainda. Um Zinf não-locked (coeficiente de variação acima do limiar) indica que o algoritmo ainda está aprendendo — apenas faltaram iterações.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se Zinf NÃO está locked (ainda está evoluindo e se aproximando do intervalo): o número de iterações foi insuficiente → seguir para node_iteracoes_insuficientes. Se Zinf está locked (parou de evoluir): há estagnação estrutural → retornar ao nó pai e seguir para node_zinf_zsup_distantes.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_stagnation</div><table class="param-table"><tr><td class="param-key">target_col</td><td class="param-val">Zinf</td></tr><tr><td class="param-key">window_size</td><td class="param-val">5</td></tr><tr><td class="param-key">cv_threshold</td><td class="param-val">1.0</td></tr><tr><td class="param-key">slope_threshold</td><td class="param-val">0.01</td></tr></table></div></div>',
+  "node_iteracoes_insuficientes": '<h2 class="detail-title">Número máximo de iterações não foi suficiente</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Concluir que o número de iterações máximas não foi suficiente</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Número de iterações não suficiente</p></div>',
+  "node_zinf_zsup_distantes": '<h2 class="detail-title">Zinf e Zsup não se aproximam</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar divergência persistente</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verificar se de fato há uma estagnação.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se de fato o Zinf e Zsup não estão se aproximando e os cortes estão estáticos deve seguir para os próximos nós</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_stagnation</div><table class="param-table"><tr><td class="param-key">target_col</td><td class="param-val">Zinf</td></tr><tr><td class="param-key">window_size</td><td class="param-val">5</td></tr><tr><td class="param-key">cv_threshold</td><td class="param-val">1.0</td></tr><tr><td class="param-key">slope_threshold</td><td class="param-val">0.01</td></tr></table></div></div>',
+  "node_penalidades_altas": '<h2 class="detail-title">Valores de penalidades são altos</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar se as penalidades dominam o custo total e identificar quais etapas e agentes concentram maior participação de penalidade</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verificar se o custo operativo representa menos de 80% do custo total (penalidades contaminando a função objetivo ou os cortes de Benders). Em seguida, detalhar por etapa e por agente onde a participação de penalidades supera o limite, identificando padrões sazonais ou de elementos específicos do sistema.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se o custo operativo for menor que 80% do total em alguma etapa e houver agentes com participação de penalidade acima de 20% → penalidades altas confirmadas → seguir para node_identificar_penalidades_entrada com a lista de etapas e agentes de alto impacto. Se a proporção estiver aceitável em todas as etapas → penalidades não são a causa → seguir para análise de forwards.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_composition</div><table class="param-table"><tr><td class="param-key">target_cost_col</td><td class="param-val">Operating_Cost</td></tr><tr><td class="param-key">all_cost_cols_json</td><td class="param-val">["Operating_Cost", "Penalty_Cost"]</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Stage</td></tr><tr><td class="param-key">min_threshold</td><td class="param-val">80.0</td></tr><tr><td class="param-key">max_threshold</td><td class="param-val">0.0</td></tr></table></div><div class="tool-card"><div class="tool-name">🔧 df_analyze_heatmap</div><table class="param-table"><tr><td class="param-key">mode</td><td class="param-val">threshold</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Stage</td></tr><tr><td class="param-key">threshold</td><td class="param-val">20.0</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div><div class="tool-card"><div class="tool-name">🔧 df_filter_above_threshold</div><table class="param-table"><tr><td class="param-key">threshold</td><td class="param-val">20.0</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Stage</td></tr><tr><td class="param-key">direction</td><td class="param-val">above</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div></div>',
+  "node_calibrar_penalidades": '<h2 class="detail-title">Calibrar valores das penalidades</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Ajustar pesos de penalização para evitar dominância de cortes</p></div><div class="detail-section"><strong>Descrição:</strong><p>As penalidades estão com valores excessivos, gerando cortes de Benders dominados que não aproximam corretamente a FCF. É necessário revisar e reduzir os valores de penalidade para que o custo operativo volte a dominar a função objetivo.</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Calibração de penalidades SDDP violações convergência cortes dominados</p></div>',
+  "node_baixo_forwards": '<h2 class="detail-title">Baixo número de forwards</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar amostragem de caminhos na fase forward</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verificar se o Zinf está estagnado mesmo com penalidades em nível aceitável. Nesse caso a causa provável é que o número reduzido de séries forward não gera diversidade suficiente para produzir cortes informativos.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se o Zinf estiver estagnado e as penalidades estiverem aceitáveis, confirma-se que a amostragem de forwards é insuficiente.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_stagnation</div><table class="param-table"><tr><td class="param-key">target_col</td><td class="param-val">Zinf</td></tr><tr><td class="param-key">window_size</td><td class="param-val">5</td></tr><tr><td class="param-key">cv_threshold</td><td class="param-val">1.0</td></tr><tr><td class="param-key">slope_threshold</td><td class="param-val">0.01</td></tr></table></div></div>',
+  "node_limitacao_cenarios": '<h2 class="detail-title">Número reduzido de séries de forwards limita a exploração de cenários</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Concluir que a amostra de forward é insuficiente para cobrir o espaço de estados</p></div><div class="detail-section"><strong>Descrição:</strong><p>O número reduzido de séries forward impede que o algoritmo explore adequadamente o espaço de estados, limitando a geração de cortes informativos e causando a estagnação do Zinf.</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Número de séries forward convergência SDDP amostragem espaço de estados</p></div>',
+  "node_deslocamento_custo_sim_politica": '<h2 class="detail-title">Deslocamento de custos simulação x política</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Ponto de entrada:</strong> <span class="tag entry-tag">deslocamento_custo</span></div><div class="detail-section"><strong>Objetivo:</strong><p>Ponto de entrada para investigar divergência entre custos da simulação e da política</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verificar se há diferença sistemática entre os custos calculados na simulação e na política. O deslocamento pode ser causado por variáveis binárias não respeitadas na simulação ou pelo uso de dados diferentes entre política e simulação.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Identificar a origem do deslocamento para direcionar o diagnóstico ao caminho correto.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_bounds</div><table class="param-table"><tr><td class="param-key">target_col</td><td class="param-val">Zinf</td></tr><tr><td class="param-key">lower_bound_col</td><td class="param-val">Lower_CI</td></tr><tr><td class="param-key">upper_bound_col</td><td class="param-val">Upper_CI</td></tr><tr><td class="param-key">reference_val_col</td><td class="param-val">Zsup</td></tr><tr><td class="param-key">iteration_col</td><td class="param-val">Iteration</td></tr><tr><td class="param-key">lock_threshold</td><td class="param-val">0.005</td></tr></table></div></div>',
+  "node_variaveis_binarias": '<h2 class="detail-title">Há variáveis binárias?</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar se o modelo utiliza variáveis binárias (não-convexidades) que possam não estar sendo respeitadas na simulação</p></div><div class="detail-section"><strong>Descrição:</strong><p>Consultar as informações do caso (seção Non-Convexities de get_case_information) para checar se há variáveis binárias ativas. A presença de não-convexidades na política, sem que sejam ativadas na simulação, causa deslocamento de custos.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se houver variáveis binárias ativas, a integralidade pode não estar sendo respeitada na simulação. Seguir para node_integralidade_violada.</p></div>',
+  "node_dados_diferentes_politica": '<h2 class="detail-title">Simulação com dados diferentes da política que não afetam a FCF</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar se a simulação utiliza dados distintos dos da política em variáveis que não influenciam a Função de Custo Futuro</p></div><div class="detail-section"><strong>Descrição:</strong><p>Checar se foram usados dados diferentes entre política e simulação (ex.: horizonte, séries, manutenções, restrições operativas) que não alteram a FCF mas causam deslocamento no custo simulado. Isso inclui verificar se a FCF usada na simulação vem de outro caso.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se os dados divergentes não afetam a FCF, o deslocamento não é de convergência mas de configuração. Verificar se está sendo usada FCF de outro caso.</p></div>',
+  "node_integralidade_violada": '<h2 class="detail-title">Integralidade das variáveis não está sendo respeitada</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Confirmar que a não-convexidade ativa na política não está sendo aplicada na simulação</p></div><div class="detail-section"><strong>Descrição:</strong><p>Quando variáveis binárias existem na política mas a simulação não resolve o MIP, as decisões de despacho podem divergir, causando deslocamento de custos. A solução é ativar a não-convexidade também na fase de simulação.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Confirmar que NonConvexityRepresentationInPolicy == 0 (não-convexidade não ativada na política). Se == 0, integralidade violada → seguir para node_ativar_nao_convexidade. Se != 0, opção ativada → rejeitar hipótese e seguir para node_estado_solucao_etapa_cenario.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_check_nonconvexity_policy</div><table class="param-table"><tr><td class="param-key">case_path</td><td class="param-val"><study_case_path></td></tr></table></div></div>',
+  "node_fcf_outro_caso": '<h2 class="detail-title">Está sendo usada a FCF de outro caso</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Concluir que a FCF aplicada na simulação foi gerada por um caso diferente, causando deslocamento</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> FCF externo caso diferente política simulação deslocamento custo futuro</p></div>',
+  "node_ativar_nao_convexidade": '<h2 class="detail-title">Ativar não-convexidade na política</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Recomendar ativação do solver MIP na fase de política para respeitar integralidade das variáveis binárias</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Não-convexidade variáveis binárias política SDDP MIP integralidade deslocamento</p></div>',
+  "node_simulacao": '<h2 class="detail-title">Simulação</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Ponto de entrada:</strong> <span class="tag entry-tag">problema_simulacao</span></div><div class="detail-section"><strong>Objetivo:</strong><p>Ponto de entrada para diagnóstico de problemas na fase de simulação</p></div><div class="detail-section"><strong>Descrição:</strong><p>Avaliar os resultados da simulação em três dimensões: composição dos custos (penalidades), correlação de custos com a ENA e status do solver por etapa e cenário.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Seguir pelos três caminhos de diagnóstico em ordem de prioridade para identificar a causa raiz.</p></div>',
+  "node_proporcao_custo_operativo_sim": '<h2 class="detail-title">Proporção do custo operativo < 80%</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar se as penalidades dominam o custo total na simulação</p></div><div class="detail-section"><strong>Descrição:</strong><p>Calcular a participação do custo operativo no custo total da simulação. Se essa proporção for inferior a 80%, as penalidades estão inflacionando o custo simulado e as etapas/agentes com maior participação de penalidade devem ser identificados.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se a proporção do custo operativo for menor que 80% em alguma etapa → seguir para node_penalidades_altas para detalhar por etapa e agente.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_composition</div><table class="param-table"><tr><td class="param-key">target_cost_col</td><td class="param-val">Operating_Cost</td></tr><tr><td class="param-key">all_cost_cols_json</td><td class="param-val">["Operating_Cost", "Penalty_Cost"]</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Stage</td></tr><tr><td class="param-key">min_threshold</td><td class="param-val">80.0</td></tr><tr><td class="param-key">max_threshold</td><td class="param-val">0.0</td></tr></table></div></div>',
+  "node_identificar_penalidades_entrada": '<h2 class="detail-title">Identificar penalidades de entrada com alto impacto nos custos</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Cruzar os agentes/etapas com alto custo de penalidade na simulação com os valores de penalidade configurados no caso de entrada para apontar o que precisa ser calibrado</p></div><div class="detail-section"><strong>Descrição:</strong><p>Após identificar as etapas e agentes com alta participação de penalidade na simulação, verifica os valores de penalidade configurados no caso SDDP para cada categoria (estudo, usinas hidráulicas, termelétricas, renováveis e sistemas). Penalidades com status zero, auto ou not_set nos agentes que apareceram no ranking de alto custo são candidatas prioritárias à calibração. Execute as funções de checagem por categoria e consolide a lista de penalidades não calibradas.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se penalidades zero/auto/not_set forem encontradas nos agentes de alto impacto → lista de penalidades a calibrar identificada → seguir para node_calibrar_penalidades com os nomes específicos. Se todas as penalidades já estiverem com valores explícitos → o problema pode ser de dados inconsistentes ou restrições conflitantes em vez de falta de calibração.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 check_study_penalties</div><table class="param-table"><tr><td class="param-key">case_path</td><td class="param-val"><study_case_path></td></tr></table></div><div class="tool-card"><div class="tool-name">🔧 check_hydro_penalties</div><table class="param-table"><tr><td class="param-key">case_path</td><td class="param-val"><study_case_path></td></tr><tr><td class="param-key">plant_name</td><td class="param-val">None</td></tr></table></div><div class="tool-card"><div class="tool-name">🔧 check_thermal_penalties</div><table class="param-table"><tr><td class="param-key">case_path</td><td class="param-val"><study_case_path></td></tr><tr><td class="param-key">plant_name</td><td class="param-val">None</td></tr></table></div><div class="tool-card"><div class="tool-name">🔧 check_renewable_penalties</div><table class="param-table"><tr><td class="param-key">case_path</td><td class="param-val"><study_case_path></td></tr><tr><td class="param-key">plant_name</td><td class="param-val">None</td></tr></table></div><div class="tool-card"><div class="tool-name">🔧 check_system_penalties</div><table class="param-table"><tr><td class="param-key">case_path</td><td class="param-val"><study_case_path></td></tr><tr><td class="param-key">system_name</td><td class="param-val">None</td></tr></table></div></div>',
+  "node_dispersao_custos_ena": '<h2 class="detail-title">Dispersão de custos x ENA</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Verificar se a dispersão dos custos simulados está correlacionada com a ENA ou se reflete ruído não hidrológico</p></div><div class="detail-section"><strong>Descrição:</strong><p>Calcular a correlação entre o custo operativo simulado e a Energia Natural Afluente (ENA) por etapa e cenário. Alta dispersão descorrelacionada da ENA pode indicar penalidades, restrições artificiais ou problemas de modelagem.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se a dispersão for alta e pouco correlacionada com a ENA, investigar se está concentrada no período úmido ou em etapas específicas.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_cross_correlation</div><table class="param-table"><tr><td class="param-key">col_a</td><td class="param-val">ENA</td></tr><tr><td class="param-key">col_b</td><td class="param-val">Operating_Cost</td></tr><tr><td class="param-key">join_on</td><td class="param-val">Stage</td></tr></table></div></div>',
+  "node_dispersao_periodo_umido": '<h2 class="detail-title">Verificar se as dispersões maiores estão no período úmido</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Concluir que a dispersão de custos está concentrada no período úmido, indicando possível problema de modelagem hidrológica ou penalidades de vertimento</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Dispersão custo período úmido ENA hidrologia vertimento simulação cenários</p></div>',
+  "node_estado_solucao_etapa_cenario": '<h2 class="detail-title">Estado da solução por etapa e cenário (Simulação horária)</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Identificar etapas e cenários com solução sub-ótima, relaxada ou infactível no solver MIP da simulação horária</p></div><div class="detail-section"><strong>Descrição:</strong><p>Analisar o heatmap de status do solver (0=Ótimo, 1=Viável, 2=Relaxado, 3=Sem solução) para cada etapa e cenário da simulação horária. Células não-ótimas indicam que o MIP não foi resolvido adequadamente.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Se houver células com status 1 (Viável), seguir para node_solucao_viavel. Se status 2 (Relaxado), seguir para node_solucao_relaxada. Se status 3 (Erro), seguir para node_solucao_erro.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_heatmap</div><table class="param-table"><tr><td class="param-key">mode</td><td class="param-val">solver_status</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Stage</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div></div>',
+  "node_solucao_viavel": '<h2 class="detail-title">Solução Viável</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Diagnosticar etapas com solução viável (não-ótima) no solver MIP — o tempo limite foi atingido antes da otimalidade</p></div><div class="detail-section"><strong>Descrição:</strong><p>O solver encontrou uma solução viável mas não comprovou otimalidade dentro do tempo limite. O custo pode estar superestimado e as decisões de despacho podem ser sub-ótimas. Aumentar o tempo do MIP ou reduzir o tamanho do problema são as ações recomendadas.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Recomendar aumento do tempo do MIP (prioridade 1) ou uso de slices menores para reduzir o problema (prioridade 2).</p></div>',
+  "node_solucao_relaxada": '<h2 class="detail-title">Solução Relaxada</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Diagnosticar etapas com solução relaxada — integralidade das variáveis binárias foi descartada pelo solver</p></div><div class="detail-section"><strong>Descrição:</strong><p>O solver não conseguiu resolver o MIP e relaxou as restrições de integralidade. As variáveis binárias foram tratadas como contínuas, comprometendo a validade física do despacho. O deslocamento de custos resultante pode ser significativo.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Recomendar aumento do tempo do MIP (prioridade 1) ou uso de slices menores para reduzir o problema (prioridade 2).</p></div>',
+  "node_solucao_erro": '<h2 class="detail-title">Erro</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Diagnosticar etapas com falha total do solver — nenhuma solução foi encontrada</p></div><div class="detail-section"><strong>Descrição:</strong><p>O solver não encontrou nenhuma solução para a etapa/cenário. Isso pode indicar infactibilidade do problema, conflito entre restrições, tempo insuficiente ou configuração inadequada do MIP.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Recomendar aumento do tempo do MIP (prioridade 1), slices menores (prioridade 2) ou checar conflito de variáveis (prioridade 3).</p></div>',
+  "node_aumentar_tempo_mip": '<h2 class="detail-title">Aumentar tempo do MIP</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Recomendar aumento do tempo limite do solver MIP para permitir obtenção de solução ótima ou viável</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Tempo limite solver MIP simulação horária SDDP configuração otimalidade</p></div>',
+  "node_usar_slices_menores": '<h2 class="detail-title">Usar slices menores para reduzir o problema</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Recomendar subdivisão temporal do problema MIP em janelas menores para reduzir complexidade e viabilizar solução ótima</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Slice janela temporal MIP simulação horária redução complexidade SDDP</p></div>',
+  "node_checar_conflito_variaveis": '<h2 class="detail-title">Checar conflito de variáveis</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Investigar restrições conflitantes ou variáveis binárias incompatíveis que tornam o problema infactível</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Conflito restrições variáveis binárias infactibilidade MIP simulação SDDP</p></div>',
+  "node_violacao": '<h2 class="detail-title">Violações e Penalidades</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Ponto de entrada:</strong> <span class="tag entry-tag">violacao</span></div><div class="detail-section"><strong>Objetivo:</strong><p>Entry point for diagnosing violations and soft-constraint calibration issues</p></div><div class="detail-section"><strong>Descrição:</strong><p>Investigate whether soft-constraint violations are excessive, systematic, or seasonal. Violations indicate that the model is paying penalty costs to remain feasible, which may signal miscalibrated penalty values or conflicting constraints.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>User is asking about violations, penalties, constraint breaches, infeasibility, or soft-constraint calibration issues in the SDDP simulation.</p></div>',
+  "node_media_proxima_maxima": '<h2 class="detail-title">Violação média ≈ violação máxima</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Test whether mean violation is close to max violation, indicating systematic occurrence across scenarios</p></div><div class="detail-section"><strong>Descrição:</strong><p>If the mean violation across scenarios is nearly as large as the maximum violation, the constraint is being violated in most scenarios — not just worst-case ones. This is a strong signal that the penalty value is globally too low.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Mean/max ratio ≥ 0.8 for most violation columns → violations are systematic across scenarios (not isolated to extremes) → penalty needs global recalibration.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_violation</div><table class="param-table"><tr><td class="param-key">analysis_type</td><td class="param-val">mean_vs_max</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">file_path_max</td><td class="param-val"><max_violations_file></td></tr><tr><td class="param-key">mean_max_ratio_threshold</td><td class="param-val">0.8</td></tr><tr><td class="param-key">top_n</td><td class="param-val">5</td></tr></table></div></div>',
+  "node_violacao_frequente": '<h2 class="detail-title">Violações ocorrem com frequência</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Test whether violations occur in a high proportion of time stages</p></div><div class="detail-section"><strong>Descrição:</strong><p>Count the share of stages where each violation column has non-zero values. If violations occur in more than 50% of stages, the constraint is being violated persistently — not sporadically. Persistent violations across time suggest the penalty is too low to discourage the behaviour.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Violations occur in ≥ 50% of stages for at least one violation column → FREQUENT → structural issue with penalty calibration.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_violation</div><table class="param-table"><tr><td class="param-key">analysis_type</td><td class="param-val">frequency</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">violation_threshold</td><td class="param-val">0.0</td></tr><tr><td class="param-key">frequency_threshold</td><td class="param-val">0.5</td></tr><tr><td class="param-key">top_n</td><td class="param-val">5</td></tr></table></div></div>',
+  "node_sazonalidade_violacao": '<h2 class="detail-title">Violações com sazonalidade específica</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Test whether violations are concentrated in specific seasonal periods</p></div><div class="detail-section"><strong>Descrição:</strong><p>Rank stages by total violation and check whether ≤ 25% of stages account for ≥ 75% of all violations. A seasonal pattern suggests the penalty value is adequate for most of the year but insufficient during specific periods (e.g., dry season).</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Violations are concentrated in ≤ 25% of stages → SEASONAL → recalibrate penalty only for those periods, not globally.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_violation</div><table class="param-table"><tr><td class="param-key">analysis_type</td><td class="param-val">seasonality</td></tr><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">top_n</td><td class="param-val">5</td></tr></table></div></div>',
+  "node_conflito_restricoes_analise": '<h2 class="detail-title">Conflito de restrições</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Fallback when no data pattern explains the violations — suggests conflicting constraints</p></div><div class="detail-section"><strong>Descrição:</strong><p>When violations are neither systematic (mean ≈ max), nor frequent, nor seasonal, the most likely cause is that two or more constraints are inherently incompatible. The model is forced to violate at least one constraint regardless of penalty values.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>No clear mean/max, frequency, or seasonality pattern confirms a different hypothesis → constraint conflict is the likely cause by exclusion.</p></div>',
+  "node_penalidade_mal_calibrada_geral": '<h2 class="detail-title">Penalidade mal calibrada globalmente</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Penalty value is too low across all stages — global recalibration needed</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Calibração penalidades SDDP violações sistemáticas soft constraints recalibrar</p></div>',
+  "node_penalidade_mal_calibrada_periodo": '<h2 class="detail-title">Penalidade mal calibrada para períodos específicos</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Penalty value needs adjustment only for specific seasonal periods</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Calibração penalidades sazonalidade período seco úmido violações específicas</p></div>',
+  "node_conflito_restricoes_conclusao": '<h2 class="detail-title">Conflito entre restrições do modelo</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Two or more constraints are incompatible, forcing the model to always violate</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Conflito restrições incompatíveis violação inevitável geração mínima inviabilidade</p></div>',
+  "node_cmo_root": '<h2 class="detail-title">CMO</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Ponto de entrada:</strong> <span class="tag entry-tag">cmo</span></div><div class="detail-section"><strong>Objetivo:</strong><p>Analisar o Custo Marginal de Operação para identificar condições de oferta e volatilidade</p></div><div class="detail-section"><strong>Descrição:</strong><p>Ponto de entrada para análise do comportamento do CMO nos diferentes cenários energéticos.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Análise da distribuição dos valores de CMO para direcionar o diagnóstico de excesso de oferta ou dispersão.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_cmo</div><table class="param-table"><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">zero_tolerance</td><td class="param-val">0.01</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div></div>',
+  "node_cmo_zero": '<h2 class="detail-title">CMO = 0</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Identificar situações de custo marginal nulo</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verifica onde o custo marginal de operação atinge o limite inferior de zero.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Frequência alta de valores nulos indica saturação de oferta.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_cmo</div><table class="param-table"><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">zero_tolerance</td><td class="param-val">0.01</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div></div>',
+  "node_cmo_negativo": '<h2 class="detail-title">CMO negativo</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Identificar situações de custo marginal negativo</p></div><div class="detail-section"><strong>Descrição:</strong><p>Verifica a ocorrência de CMO abaixo de zero, geralmente vinculado a restrições operacionais severas ou vertimento penalizado.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Valores < 0 indicam que o sistema está pagando para não gerar ou sofrendo penalidades de excesso.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_cmo</div><table class="param-table"><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">zero_tolerance</td><td class="param-val">0.01</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div></div>',
+  "node_dispersao_cmo": '<h2 class="detail-title">Dispersão do CMO</h2><span class="badge" style="background:#3B82F6;color:#FFFFFF">Análise</span><div class="detail-section"><strong>Objetivo:</strong><p>Avaliar a variabilidade do CMO em relação aos cenários</p></div><div class="detail-section"><strong>Descrição:</strong><p>Analisa como o CMO se comporta frente às variações de ENA (Energia Natural Afluente) nos cenários.</p></div><div class="detail-section expected-box"><strong>Estado esperado:</strong><p>Alta correlação negativa ou dispersão elevada sugere sensibilidade excessiva aos cenários.</p></div><div class="detail-section"><strong>Ferramentas:</strong><div class="tool-card"><div class="tool-name">🔧 df_analyze_cmo</div><table class="param-table"><tr><td class="param-key">label_col</td><td class="param-val">Etapas</td></tr><tr><td class="param-key">zero_tolerance</td><td class="param-val">0.01</td></tr><tr><td class="param-key">top_n</td><td class="param-val">10</td></tr></table></div></div>',
+  "node_concl_excesso_oferta": '<h2 class="detail-title">Excesso de oferta</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Diagnosticar saturação do sistema</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Excesso oferta energia CMO zero custo marginal nulo saturação geração renovável</p></div>',
+  "node_concl_excesso_penalidade": '<h2 class="detail-title">Excesso de oferta + penalidade de vertimento</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Diagnosticar impacto de penalidades em cenários de excesso</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> CMO negativo penalidade vertimento excesso oferta custo marginal negativo geração must-run</p></div>',
+  "node_concl_volatilidade_alta": '<h2 class="detail-title">Volatilidade alta dos preços em relação aos cenários</h2><span class="badge" style="background:#10B981;color:#FFFFFF">Conclusão</span><div class="detail-section"><strong>Objetivo:</strong><p>Diagnosticar instabilidade de preços</p></div><div class="detail-section doc-box"><strong>Documentação:</strong><p><em>Estratégia:</em> similarity | <em>top_k:</em> 2</p><p><em>Busca:</em> Volatilidade preços CMO dispersão cenários incerteza hidrológica ENA custo marginal variação</p></div>'
+};
+
+const cyNodes = [
+  {data: {id: "node_root_nao_convergencia", label: "Não convergência na política", type: "entry", tools: ["df_analyze_bounds"]}, style: {"background-color": "#F59E0B", "border-color": "#B45309", "color": "#FFFFFF"} },
+  {data: {id: "node_zinf_aproximando_zsup", label: "Zinf está se aproximando do intervalo de confiança do Zsup", type: "analysis", tools: ["df_analyze_stagnation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_iteracoes_insuficientes", label: "Número máximo de iterações não foi suficiente", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_zinf_zsup_distantes", label: "Zinf e Zsup não se aproximam", type: "analysis", tools: ["df_analyze_stagnation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_penalidades_altas", label: "Valores de penalidades são altos", type: "analysis", tools: ["df_analyze_composition", "df_analyze_heatmap", "df_filter_above_threshold"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_calibrar_penalidades", label: "Calibrar valores das penalidades", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_baixo_forwards", label: "Baixo número de forwards", type: "analysis", tools: ["df_analyze_stagnation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_limitacao_cenarios", label: "Número reduzido de séries de forwards limita a exploração de cenários", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_deslocamento_custo_sim_politica", label: "Deslocamento de custos simulação x política", type: "entry", tools: ["df_analyze_bounds"]}, style: {"background-color": "#F59E0B", "border-color": "#B45309", "color": "#FFFFFF"} },
+  {data: {id: "node_variaveis_binarias", label: "Há variáveis binárias?", type: "analysis", tools: []}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_dados_diferentes_politica", label: "Simulação com dados diferentes da política que não afetam a FCF", type: "analysis", tools: []}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_integralidade_violada", label: "Integralidade das variáveis não está sendo respeitada", type: "analysis", tools: ["df_check_nonconvexity_policy"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_fcf_outro_caso", label: "Está sendo usada a FCF de outro caso", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_ativar_nao_convexidade", label: "Ativar não-convexidade na política", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_simulacao", label: "Simulação", type: "entry", tools: []}, style: {"background-color": "#F59E0B", "border-color": "#B45309", "color": "#FFFFFF"} },
+  {data: {id: "node_proporcao_custo_operativo_sim", label: "Proporção do custo operativo < 80%", type: "analysis", tools: ["df_analyze_composition"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_identificar_penalidades_entrada", label: "Identificar penalidades de entrada com alto impacto nos custos", type: "analysis", tools: ["check_study_penalties", "check_hydro_penalties", "check_thermal_penalties", "check_renewable_penalties", "check_system_penalties"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_dispersao_custos_ena", label: "Dispersão de custos x ENA", type: "analysis", tools: ["df_cross_correlation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_dispersao_periodo_umido", label: "Verificar se as dispersões maiores estão no período úmido", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_estado_solucao_etapa_cenario", label: "Estado da solução por etapa e cenário (Simulação horária)", type: "analysis", tools: ["df_analyze_heatmap"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_solucao_viavel", label: "Solução Viável", type: "analysis", tools: []}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_solucao_relaxada", label: "Solução Relaxada", type: "analysis", tools: []}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_solucao_erro", label: "Erro", type: "analysis", tools: []}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_aumentar_tempo_mip", label: "Aumentar tempo do MIP", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_usar_slices_menores", label: "Usar slices menores para reduzir o problema", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_checar_conflito_variaveis", label: "Checar conflito de variáveis", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_violacao", label: "Violações e Penalidades", type: "entry", tools: []}, style: {"background-color": "#F59E0B", "border-color": "#B45309", "color": "#FFFFFF"} },
+  {data: {id: "node_media_proxima_maxima", label: "Violação média ≈ violação máxima", type: "analysis", tools: ["df_analyze_violation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_violacao_frequente", label: "Violações ocorrem com frequência", type: "analysis", tools: ["df_analyze_violation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_sazonalidade_violacao", label: "Violações com sazonalidade específica", type: "analysis", tools: ["df_analyze_violation"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_conflito_restricoes_analise", label: "Conflito de restrições", type: "analysis", tools: []}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_penalidade_mal_calibrada_geral", label: "Penalidade mal calibrada globalmente", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_penalidade_mal_calibrada_periodo", label: "Penalidade mal calibrada para períodos específicos", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_conflito_restricoes_conclusao", label: "Conflito entre restrições do modelo", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_cmo_root", label: "CMO", type: "entry", tools: ["df_analyze_cmo"]}, style: {"background-color": "#F59E0B", "border-color": "#B45309", "color": "#FFFFFF"} },
+  {data: {id: "node_cmo_zero", label: "CMO = 0", type: "analysis", tools: ["df_analyze_cmo"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_cmo_negativo", label: "CMO negativo", type: "analysis", tools: ["df_analyze_cmo"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_dispersao_cmo", label: "Dispersão do CMO", type: "analysis", tools: ["df_analyze_cmo"]}, style: {"background-color": "#3B82F6", "border-color": "#1D4ED8", "color": "#FFFFFF"} },
+  {data: {id: "node_concl_excesso_oferta", label: "Excesso de oferta", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_concl_excesso_penalidade", label: "Excesso de oferta + penalidade de vertimento", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} },
+  {data: {id: "node_concl_volatilidade_alta", label: "Volatilidade alta dos preços em relação aos cenários", type: "conclusion", tools: []}, style: {"background-color": "#10B981", "border-color": "#065F46", "color": "#FFFFFF"} }
+];
+
+const cyEdges = [
+  {data: {id: "e0", source: "node_root_nao_convergencia", target: "node_zinf_aproximando_zsup", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e1", source: "node_root_nao_convergencia", target: "node_zinf_zsup_distantes", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e2", source: "node_zinf_aproximando_zsup", target: "node_iteracoes_insuficientes", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e3", source: "node_zinf_zsup_distantes", target: "node_penalidades_altas", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e4", source: "node_zinf_zsup_distantes", target: "node_baixo_forwards", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e5", source: "node_penalidades_altas", target: "node_identificar_penalidades_entrada", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e6", source: "node_baixo_forwards", target: "node_limitacao_cenarios", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e7", source: "node_deslocamento_custo_sim_politica", target: "node_variaveis_binarias", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e8", source: "node_deslocamento_custo_sim_politica", target: "node_dados_diferentes_politica", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e9", source: "node_variaveis_binarias", target: "node_integralidade_violada", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e10", source: "node_dados_diferentes_politica", target: "node_fcf_outro_caso", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e11", source: "node_integralidade_violada", target: "node_ativar_nao_convexidade", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e12", source: "node_integralidade_violada", target: "node_estado_solucao_etapa_cenario", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e13", source: "node_simulacao", target: "node_proporcao_custo_operativo_sim", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e14", source: "node_simulacao", target: "node_dispersao_custos_ena", priority: 3, label: "P3"}, style: {"line-color": "#EAB308", "target-arrow-color": "#EAB308"} },
+  {data: {id: "e15", source: "node_simulacao", target: "node_estado_solucao_etapa_cenario", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e16", source: "node_proporcao_custo_operativo_sim", target: "node_penalidades_altas", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e17", source: "node_identificar_penalidades_entrada", target: "node_calibrar_penalidades", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e18", source: "node_dispersao_custos_ena", target: "node_dispersao_periodo_umido", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e19", source: "node_estado_solucao_etapa_cenario", target: "node_solucao_viavel", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e20", source: "node_estado_solucao_etapa_cenario", target: "node_solucao_relaxada", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e21", source: "node_estado_solucao_etapa_cenario", target: "node_solucao_erro", priority: 3, label: "P3"}, style: {"line-color": "#EAB308", "target-arrow-color": "#EAB308"} },
+  {data: {id: "e22", source: "node_solucao_viavel", target: "node_aumentar_tempo_mip", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e23", source: "node_solucao_viavel", target: "node_usar_slices_menores", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e24", source: "node_solucao_relaxada", target: "node_aumentar_tempo_mip", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e25", source: "node_solucao_relaxada", target: "node_usar_slices_menores", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e26", source: "node_solucao_erro", target: "node_aumentar_tempo_mip", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e27", source: "node_solucao_erro", target: "node_usar_slices_menores", priority: 3, label: "P3"}, style: {"line-color": "#EAB308", "target-arrow-color": "#EAB308"} },
+  {data: {id: "e28", source: "node_solucao_erro", target: "node_checar_conflito_variaveis", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e29", source: "node_violacao", target: "node_media_proxima_maxima", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e30", source: "node_violacao", target: "node_violacao_frequente", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e31", source: "node_violacao", target: "node_sazonalidade_violacao", priority: 3, label: "P3"}, style: {"line-color": "#EAB308", "target-arrow-color": "#EAB308"} },
+  {data: {id: "e32", source: "node_violacao", target: "node_conflito_restricoes_analise", priority: 4, label: "P4"}, style: {"line-color": "#6B7280", "target-arrow-color": "#6B7280"} },
+  {data: {id: "e33", source: "node_media_proxima_maxima", target: "node_penalidade_mal_calibrada_geral", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e34", source: "node_violacao_frequente", target: "node_penalidade_mal_calibrada_geral", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e35", source: "node_sazonalidade_violacao", target: "node_penalidade_mal_calibrada_periodo", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e36", source: "node_conflito_restricoes_analise", target: "node_conflito_restricoes_conclusao", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e37", source: "node_cmo_root", target: "node_cmo_zero", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e38", source: "node_cmo_root", target: "node_cmo_negativo", priority: 2, label: "P2"}, style: {"line-color": "#F97316", "target-arrow-color": "#F97316"} },
+  {data: {id: "e39", source: "node_cmo_root", target: "node_dispersao_cmo", priority: 3, label: "P3"}, style: {"line-color": "#EAB308", "target-arrow-color": "#EAB308"} },
+  {data: {id: "e40", source: "node_cmo_zero", target: "node_concl_excesso_oferta", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e41", source: "node_cmo_negativo", target: "node_concl_excesso_penalidade", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} },
+  {data: {id: "e42", source: "node_dispersao_cmo", target: "node_concl_volatilidade_alta", priority: 1, label: "P1"}, style: {"line-color": "#EF4444", "target-arrow-color": "#EF4444"} }
+];
+
+// ── inicializa Cytoscape ──────────────────────────────────────────────────────
+const cy = cytoscape({
+  container: document.getElementById('cy'),
+  elements: { nodes: cyNodes, edges: cyEdges },
+  style: [
+    {
+      selector: 'node',
+      style: {
+        'label': 'data(label)',
+        'text-wrap': 'wrap',
+        'text-max-width': '140px',
+        'font-size': '11px',
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'width': 'label',
+        'height': 'label',
+        'padding': '12px',
+        'shape': 'round-rectangle',
+        'border-width': '2px',
+        'border-style': 'solid',
+        'transition-property': 'border-width, border-color',
+        'transition-duration': '0.15s',
+        'font-family': '-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
+        'font-weight': '600',
+        'text-outline-width': 0,
+      }
+    },
+    {
+      selector: 'node[type="entry"]',
+      style: {
+        'shape': 'hexagon',
+        'font-size': '12px',
+      }
+    },
+    {
+      selector: 'node[type="conclusion"]',
+      style: {
+        'shape': 'round-rectangle',
+        'border-style': 'dashed',
+        'border-width': '2px',
+      }
+    },
+    {
+      selector: 'node:selected, node.highlighted',
+      style: {
+        'border-width': '4px',
+        'border-color': '#FFFFFF',
+      }
+    },
+    {
+      selector: 'edge',
+      style: {
+        'width': 2,
+        'curve-style': 'bezier',
+        'target-arrow-shape': 'triangle',
+        'arrow-scale': 1.2,
+        'label': 'data(label)',
+        'font-size': '9px',
+        'color': '#94A3B8',
+        'text-background-color': '#0F172A',
+        'text-background-opacity': 0.85,
+        'text-background-padding': '2px',
+        'transition-property': 'width',
+        'transition-duration': '0.15s',
+        'font-family': '-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif',
+      }
+    },
+    {
+      selector: 'edge[priority=1]',
+      style: { 'width': 3 }
+    },
+    {
+      selector: 'edge.faded',
+      style: { 'opacity': 0.15 }
+    },
+    {
+      selector: 'node.faded',
+      style: { 'opacity': 0.2 }
+    },
+  ],
+  layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.6, padding: 40 },
+  minZoom: 0.1,
+  maxZoom: 4,
+  wheelSensitivity: 0.3,
+});
+
+// ── layout ────────────────────────────────────────────────────────────────────
+function relayout() {
+  cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.6, padding: 40 }).run();
+}
+
+// ── painel de detalhes ────────────────────────────────────────────────────────
+const panel = document.getElementById('panel');
+
+function showDetail(nodeId) {
+  const html = nodeDetails[nodeId];
+  if (html) {
+    panel.innerHTML = html;
+    panel.classList.remove('hidden');
+  }
+}
+
+function togglePanel() {
+  panel.classList.toggle('hidden');
+}
+
+// ── foco num nó (entry points) ────────────────────────────────────────────────
+function focusNode(nodeId) {
+  const n = cy.getElementById(nodeId);
+  if (!n.length) return;
+  cy.animate({
+    center: { eles: n },
+    zoom: 1.6,
+  }, { duration: 500 });
+  n.emit('tap');
+}
+
+// ── highlight de vizinhança ───────────────────────────────────────────────────
+cy.on('tap', 'node', function(evt) {
+  const node = evt.target;
+  const nodeId = node.id();
+
+  // highlight
+  cy.elements().removeClass('faded highlighted');
+  const neighborhood = node.closedNeighborhood();
+  cy.elements().not(neighborhood).addClass('faded');
+  node.addClass('highlighted');
+
+  // detalhe
+  showDetail(nodeId);
+});
+
+cy.on('tap', function(evt) {
+  if (evt.target === cy) {
+    cy.elements().removeClass('faded highlighted');
+  }
+});
+
+// ── tooltip simples no hover ──────────────────────────────────────────────────
+cy.on('mouseover', 'node', function(evt) {
+  document.getElementById('cy').style.cursor = 'pointer';
+});
+cy.on('mouseout', 'node', function() {
+  document.getElementById('cy').style.cursor = 'default';
+});
+
+cy.fit();
+</script>
+</body>
+</html>

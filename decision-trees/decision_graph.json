@@ -89,10 +89,10 @@
       "id": "node_penalidades_altas",
       "type": "analysis",
       "label": "Valores de penalidades são altos",
-      "purpose": "Verificar impacto das penalidades na convergência",
+      "purpose": "Verificar se as penalidades dominam o custo total e identificar quais etapas e agentes concentram maior participação de penalidade",
       "content": {
-        "description": "Verificar se as penalidades estão dominando a função objetivo. Se o custo operativo representa menos de 80% do custo total, as penalidades estão contaminando os cortes de Benders.",
-        "expected_state": "Se o custo operativo for menor que 80% do total, as penalidades estão altas e devem ser calibradas. Caso contrário, seguir para análise de forwards."
+        "description": "Verificar se o custo operativo representa menos de 80% do custo total (penalidades contaminando a função objetivo ou os cortes de Benders). Em seguida, detalhar por etapa e por agente onde a participação de penalidades supera o limite, identificando padrões sazonais ou de elementos específicos do sistema.",
+        "expected_state": "Se o custo operativo for menor que 80% do total em alguma etapa e houver agentes com participação de penalidade acima de 20% → penalidades altas confirmadas → seguir para node_identificar_penalidades_entrada com a lista de etapas e agentes de alto impacto. Se a proporção estiver aceitável em todas as etapas → penalidades não são a causa → seguir para análise de forwards."
       },
       "tools": [
         {
@@ -100,7 +100,7 @@
           "params": {
             "target_cost_col": "Operating_Cost",
             "all_cost_cols_json": "[\"Operating_Cost\", \"Penalty_Cost\"]",
-            "label_col": "Iteration",
+            "label_col": "Stage",
             "min_threshold": 80.0,
             "max_threshold": 0.0
           }
@@ -278,7 +278,7 @@
       "purpose": "Verificar se as penalidades dominam o custo total na simulação",
       "content": {
         "description": "Calcular a participação do custo operativo no custo total da simulação. Se essa proporção for inferior a 80%, as penalidades estão inflacionando o custo simulado e as etapas/agentes com maior participação de penalidade devem ser identificados.",
-        "expected_state": "Se a proporção do custo operativo for menor que 80% em alguma etapa, seguir para node_verificar_etapas_penalidades_sim."
+        "expected_state": "Se a proporção do custo operativo for menor que 80% em alguma etapa → seguir para node_penalidades_altas para detalhar por etapa e agente."
       },
       "tools": [
         {
@@ -294,36 +294,52 @@
       ]
     },
     {
-      "id": "node_verificar_etapas_penalidades_sim",
+      "id": "node_identificar_penalidades_entrada",
       "type": "analysis",
-      "label": "Verificar etapas e penalidades em que isso ocorre",
-      "purpose": "Identificar quais etapas e agentes concentram maior participação de penalidades na simulação",
+      "label": "Identificar penalidades de entrada com alto impacto nos custos",
+      "purpose": "Cruzar os agentes/etapas com alto custo de penalidade na simulação com os valores de penalidade configurados no caso de entrada para apontar o que precisa ser calibrado",
       "content": {
-        "description": "Detalhar por etapa e por agente (coluna de penalidade) onde a participação de penalidades supera o limite. Permite identificar padrões sazonais ou de elementos específicos do sistema.",
-        "expected_state": "Listar as etapas e agentes com penalidades elevadas para embasar a calibração."
+        "description": "Após identificar as etapas e agentes com alta participação de penalidade na simulação, verifica os valores de penalidade configurados no caso SDDP para cada categoria (estudo, usinas hidráulicas, termelétricas, renováveis e sistemas). Penalidades com status zero, auto ou not_set nos agentes que apareceram no ranking de alto custo são candidatas prioritárias à calibração. Execute as funções de checagem por categoria e consolide a lista de penalidades não calibradas.",
+        "expected_state": "Se penalidades zero/auto/not_set forem encontradas nos agentes de alto impacto → lista de penalidades a calibrar identificada → seguir para node_calibrar_penalidades com os nomes específicos. Se todas as penalidades já estiverem com valores explícitos → o problema pode ser de dados inconsistentes ou restrições conflitantes em vez de falta de calibração."
       },
       "tools": [
         {
-          "name": "df_analyze_composition",
+          "name": "check_study_penalties",
           "params": {
-            "target_cost_col": "Operating_Cost",
-            "all_cost_cols_json": "[\"Operating_Cost\", \"Penalty_Cost\"]",
-            "label_col": "Stage",
-            "min_threshold": 80.0,
-            "max_threshold": 0.0
+            "case_path": "<study_case_path>"
           }
         },
         {
-          "name": "df_filter_above_threshold",
+          "name": "check_hydro_penalties",
           "params": {
-            "threshold": 20.0,
-            "label_col": "Stage",
-            "direction": "above",
-            "top_n": 10
+            "case_path": "<study_case_path>",
+            "plant_name": null
+          }
+        },
+        {
+          "name": "check_thermal_penalties",
+          "params": {
+            "case_path": "<study_case_path>",
+            "plant_name": null
+          }
+        },
+        {
+          "name": "check_renewable_penalties",
+          "params": {
+            "case_path": "<study_case_path>",
+            "plant_name": null
+          }
+        },
+        {
+          "name": "check_system_penalties",
+          "params": {
+            "case_path": "<study_case_path>",
+            "system_name": null
           }
         }
       ]
     },
+
     {
       "id": "node_dispersao_custos_ena",
       "type": "analysis",
@@ -686,7 +702,7 @@
     { "source": "node_zinf_zsup_distantes", "target": "node_penalidades_altas", "priority": 1 },
     { "source": "node_zinf_zsup_distantes", "target": "node_baixo_forwards", "priority": 2 },
 
-    { "source": "node_penalidades_altas", "target": "node_calibrar_penalidades", "priority": 1 },
+    { "source": "node_penalidades_altas", "target": "node_identificar_penalidades_entrada", "priority": 1 },
 
     { "source": "node_baixo_forwards", "target": "node_limitacao_cenarios", "priority": 1 },
 
@@ -704,9 +720,9 @@
     { "source": "node_simulacao", "target": "node_dispersao_custos_ena", "priority": 3 },
     { "source": "node_simulacao", "target": "node_estado_solucao_etapa_cenario", "priority": 2 },
 
-    { "source": "node_proporcao_custo_operativo_sim", "target": "node_verificar_etapas_penalidades_sim", "priority": 1 },
+    { "source": "node_proporcao_custo_operativo_sim", "target": "node_penalidades_altas", "priority": 1 },
 
-    { "source": "node_verificar_etapas_penalidades_sim", "target": "node_calibrar_penalidades", "priority": 1 },
+    { "source": "node_identificar_penalidades_entrada", "target": "node_calibrar_penalidades", "priority": 1 },
 
     { "source": "node_dispersao_custos_ena", "target": "node_dispersao_periodo_umido", "priority": 1 },
 

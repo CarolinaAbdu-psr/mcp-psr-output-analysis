@@ -28,6 +28,13 @@ from psr.outputanalysismcp.dataframe_functions import (
     get_data_summary,
     get_dataframe_head,
 )
+from psr.outputanalysismcp.penalty_functions import (
+    check_study_penalties,
+    check_hydro_penalties,
+    check_thermal_penalties,
+    check_renewable_penalties,
+    check_system_penalties,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +195,67 @@ def _wrap_analyze_violation(params: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Penalty wrappers
+# ---------------------------------------------------------------------------
+
+def _parse_penalty_names(params: dict, key: str = "penalty_names") -> list[str] | None:
+    """Accept a JSON list, a comma-separated string, or None."""
+    raw = params.get(key)
+    if not raw:
+        return None
+    if isinstance(raw, list):
+        return [str(n).strip() for n in raw if str(n).strip()]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(n).strip() for n in parsed if str(n).strip()]
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return [n.strip() for n in raw.split(",") if n.strip()]
+    return None
+
+
+def _wrap_check_study_penalties(params: dict) -> dict:
+    return check_study_penalties(
+        params["case_path"],
+        penalty_names=_parse_penalty_names(params),
+    )
+
+
+def _wrap_check_hydro_penalties(params: dict) -> dict:
+    return check_hydro_penalties(
+        params["case_path"],
+        plant_name=params.get("plant_name") or None,
+        penalty_names=_parse_penalty_names(params),
+    )
+
+
+def _wrap_check_thermal_penalties(params: dict) -> dict:
+    return check_thermal_penalties(
+        params["case_path"],
+        plant_name=params.get("plant_name") or None,
+        penalty_names=_parse_penalty_names(params),
+    )
+
+
+def _wrap_check_renewable_penalties(params: dict) -> dict:
+    return check_renewable_penalties(
+        params["case_path"],
+        plant_name=params.get("plant_name") or None,
+        penalty_names=_parse_penalty_names(params),
+    )
+
+
+def _wrap_check_system_penalties(params: dict) -> dict:
+    return check_system_penalties(
+        params["case_path"],
+        system_name=params.get("system_name") or None,
+        penalty_names=_parse_penalty_names(params),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dispatch table
 # ---------------------------------------------------------------------------
 
@@ -203,6 +271,12 @@ TOOL_DISPATCH: dict[str, object] = {
     "df_analyze_violation":          _wrap_analyze_violation,
     "df_check_nonconvexity_policy":  _wrap_check_nonconvexity_policy,
     "df_analyze_cmo":                _wrap_analyze_cmo,
+    # Penalty tools
+    "check_study_penalties":         _wrap_check_study_penalties,
+    "check_hydro_penalties":         _wrap_check_hydro_penalties,
+    "check_thermal_penalties":       _wrap_check_thermal_penalties,
+    "check_renewable_penalties":     _wrap_check_renewable_penalties,
+    "check_system_penalties":        _wrap_check_system_penalties,
 }
 
 

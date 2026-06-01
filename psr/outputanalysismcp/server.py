@@ -25,6 +25,13 @@ from .dataframe_functions import (
     filter_by_threshold,
     analyze_violation,
 )
+from .penalty_functions import (
+    check_study_penalties,
+    check_hydro_penalties,
+    check_thermal_penalties,
+    check_renewable_penalties,
+    check_system_penalties,
+)
 
 # ---------------------------------------------------------------------------
 # Module-level state
@@ -1319,6 +1326,248 @@ def df_analyze_cmo(
         top_n=top_n,
     )
     return _format_result(result, f"CMO DISTRIBUTION ANALYSIS — {Path(file_path).name}")
+
+
+# ---------------------------------------------------------------------------
+# Penalty analysis tools
+# ---------------------------------------------------------------------------
+
+def _format_penalty_report(result: dict) -> str:
+    """Convert a penalty_functions dict into a human-readable text report."""
+    lines: list[str] = []
+    case = result.get("case", "?")
+    category = result.get("category", "?").upper()
+    lines.append(f"=== {category} PENALTIES — {case} ===")
+    lines.append("")
+    lines.append(result.get("summary", ""))
+    lines.append("")
+
+    # Study-level: single penalties dict
+    if "penalties" in result and "plants" not in result and "systems" not in result:
+        for prop, data in result["penalties"].items():
+            val = data.get("value")
+            unit = data.get("unit", "")
+            status = data.get("status", "")
+            note = data.get("note", "")
+            val_str = f"{val} {unit}".strip() if val is not None else "(not set)"
+            lines.append(f"  {prop}: {val_str}  [{status}]")
+            if note:
+                lines.append(f"    → {note}")
+        lines.append("")
+        if result.get("flagged"):
+            lines.append("⚠ Flagged (zero / auto / not-set):")
+            for p in result["flagged"]:
+                lines.append(f"  - {p}")
+
+    # Object-level: plants or systems list
+    for key in ("plants", "systems"):
+        if key not in result:
+            continue
+        for obj in result[key]:
+            lines.append(f"  [{obj.get('name', '?')}]  code={obj.get('code', '?')}")
+            for prop, data in obj.get("penalties", {}).items():
+                val = data.get("value")
+                unit = data.get("unit", "")
+                status = data.get("status", "")
+                # For dynamic props (renewable SpillingPenalty)
+                smry = data.get("summary")
+                if smry is not None:
+                    val_str = (
+                        f"mean={smry['mean']:.3f} min={smry['min']:.3f} "
+                        f"max={smry['max']:.3f} {unit} "
+                        f"(nonzero={smry['nonzero']}/{smry['total']})"
+                    )
+                elif val is not None:
+                    val_str = f"{val} {unit}".strip()
+                else:
+                    val_str = "(not set)"
+                lines.append(f"    {prop}: {val_str}  [{status}]")
+            if obj.get("flagged"):
+                lines.append(f"    ⚠ flagged: {', '.join(obj['flagged'])}")
+            lines.append("")
+
+    if result.get("uncalibrated"):
+        lines.append("⚠ Objects with uncalibrated penalties:")
+        for name in result["uncalibrated"]:
+            lines.append(f"  - {name}")
+
+    return "\n".join(lines)
+
+
+def _parse_names_csv(csv: str) -> list[str] | None:
+    """Parse a comma-separated penalty names string into a list, or None if empty."""
+    if not csv or not csv.strip():
+        return None
+    return [n.strip() for n in csv.split(",") if n.strip()]
+
+
+@mcp.tool()
+def check_study_penalties_tool(
+    case_path: str,
+    penalty_names: str = "",
+) -> str:
+    """
+    Read and report study-level penalty settings from an SDDP case.
+
+    Available penalty names (pass one or more, comma-separated):
+      SpillagePenaltyKHm3         — global spillage penalty (k$/hm3)
+      MinimumOutflowPenaltyHm3    — minimum outflow penalty ($/hm3)
+      OverloadPenaltyMwh          — overload penalty for circuits ($/MWh)
+      WaterwayFlowPenalty         — waterway flow constraint penalty
+      RepresentPenaltiesInTwoLevels — 0=No / 1=Yes two-level split
+
+    Each property is reported with status: custom | zero | auto (-1) | not_set.
+    Does NOT require a results CSV — reads directly from the case input files.
+
+    Args:
+        case_path:     Absolute path to the SDDP case folder.
+        penalty_names: Comma-separated subset of penalty names to query.
+                       Leave empty to read all study penalties.
+                       Example: "SpillagePenaltyKHm3,OverloadPenaltyMwh"
+    """
+    try:
+        result = check_study_penalties(case_path, penalty_names=_parse_names_csv(penalty_names))
+    except Exception as exc:
+        return f"[Error] Could not read study penalties from '{case_path}': {exc}"
+    return _format_penalty_report(result)
+
+
+@mcp.tool()
+def check_hydro_penalties_tool(
+    case_path: str,
+    plant_name: str = "",
+    penalty_names: str = "",
+) -> str:
+    """
+    Read and report hydro plant penalty settings from an SDDP case.
+
+    Available penalty names (pass one or more, comma-separated):
+      AlertStoragePenalty                   — alert storage violation (k$/hm3), -1=auto
+      MaximumOperativeStoragePenalty        — max operative storage violation (k$/hm3), -1=auto
+      MinimumOperativeStoragePenalty        — min operative storage violation (k$/hm3), -1=auto
+      MaximumSpillagePenalty                — max spillage violation (k$/hm3), -1=auto
+      MaximumTurbiningPenalty               — max turbined outflow violation, 0=disabled
+      MinimumTurbiningPenalty               — min turbined outflow violation, 0=disabled
+      MinimumOperativeTotalOutflowPenalty   — min total outflow violation (k$/hm3)
+
+    Value -1 means automatic (set by model to exceed deficit cost).
+    Value 0 means disabled (constraint not penalized).
+
+    Args:
+        case_path:     Absolute path to the SDDP case folder.
+        plant_name:    Filter to a single plant by name. Empty = all plants.
+        penalty_names: Comma-separated subset of penalty names to query.
+                       Leave empty to read all hydro penalties.
+                       Example: "MinimumOperativeStoragePenalty,AlertStoragePenalty"
+    """
+    try:
+        result = check_hydro_penalties(
+            case_path,
+            plant_name=plant_name or None,
+            penalty_names=_parse_names_csv(penalty_names),
+        )
+    except Exception as exc:
+        return f"[Error] Could not read hydro penalties from '{case_path}': {exc}"
+    return _format_penalty_report(result)
+
+
+@mcp.tool()
+def check_thermal_penalties_tool(
+    case_path: str,
+    plant_name: str = "",
+    penalty_names: str = "",
+) -> str:
+    """
+    Read and report thermal plant penalty settings from an SDDP case.
+
+    Available penalty names (pass one or more, comma-separated):
+      MinimumGenerationPenalty   — min generation violation (k$/MWh), -1=auto, 0=disabled
+
+    Uncalibrated (zero) MinimumGenerationPenalty lets the solver ignore minimum-load
+    constraints, causing unrealistic dispatch.
+
+    Args:
+        case_path:     Absolute path to the SDDP case folder.
+        plant_name:    Filter to a single plant by name. Empty = all plants.
+        penalty_names: Comma-separated subset of penalty names to query.
+                       Leave empty to read all thermal penalties.
+                       Example: "MinimumGenerationPenalty"
+    """
+    try:
+        result = check_thermal_penalties(
+            case_path,
+            plant_name=plant_name or None,
+            penalty_names=_parse_names_csv(penalty_names),
+        )
+    except Exception as exc:
+        return f"[Error] Could not read thermal penalties from '{case_path}': {exc}"
+    return _format_penalty_report(result)
+
+
+@mcp.tool()
+def check_renewable_penalties_tool(
+    case_path: str,
+    plant_name: str = "",
+    penalty_names: str = "",
+) -> str:
+    """
+    Read and report renewable plant curtailment/spilling penalty settings.
+
+    Available penalty names (pass one or more, comma-separated):
+      SpillingPenalty   — curtailment cost ($/MWh, dynamic — varies with time).
+                          0 = free curtailment → can produce negative CMO.
+                          -1 = model default.
+
+    Reports mean/min/max/nonzero statistics for the time-varying penalty series.
+
+    Args:
+        case_path:     Absolute path to the SDDP case folder.
+        plant_name:    Filter to a single plant by name. Empty = all plants.
+        penalty_names: Comma-separated subset of penalty names to query.
+                       Leave empty to read all renewable penalties.
+                       Example: "SpillingPenalty"
+    """
+    try:
+        result = check_renewable_penalties(
+            case_path,
+            plant_name=plant_name or None,
+            penalty_names=_parse_names_csv(penalty_names),
+        )
+    except Exception as exc:
+        return f"[Error] Could not read renewable penalties from '{case_path}': {exc}"
+    return _format_penalty_report(result)
+
+
+@mcp.tool()
+def check_system_penalties_tool(
+    case_path: str,
+    system_name: str = "",
+    penalty_names: str = "",
+) -> str:
+    """
+    Read and report system-level penalty settings from an SDDP case.
+
+    Available penalty names (pass one or more, comma-separated):
+      RiskAversionCurvePenalty                    — risk aversion curve penalty (k$/MWh), -1=auto
+      HydroPlant_PrimaryReserveViolationPenalty   — hydro primary reserve violation
+      ThermalPlant_PrimaryReserveViolationPenalty — thermal primary reserve violation
+
+    Args:
+        case_path:     Absolute path to the SDDP case folder.
+        system_name:   Filter to a single system by name. Empty = all systems.
+        penalty_names: Comma-separated subset of penalty names to query.
+                       Leave empty to read all system penalties.
+                       Example: "RiskAversionCurvePenalty"
+    """
+    try:
+        result = check_system_penalties(
+            case_path,
+            system_name=system_name or None,
+            penalty_names=_parse_names_csv(penalty_names),
+        )
+    except Exception as exc:
+        return f"[Error] Could not read system penalties from '{case_path}': {exc}"
+    return _format_penalty_report(result)
 
 
 # ---------------------------------------------------------------------------
