@@ -17,7 +17,7 @@ from ..tools.graph_loader import load_graph
 from ..utils import get_logger
 
 # Reuse hypothesis testing and parameter resolution from graph_navigator
-from .graph_navigator import _hypothesis_holds, _resolve_params
+from .graph_navigator import _hypothesis_holds
 
 _log = get_logger("verify_entry")
 
