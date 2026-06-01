@@ -280,18 +280,40 @@ TOOL_DISPATCH: dict[str, object] = {
 }
 
 
+def _to_python(obj):
+    """Recursively convert numpy/pandas scalars to plain Python types."""
+    import numpy as np  # local import — only pay the cost when needed
+
+    if isinstance(obj, dict):
+        return {k: _to_python(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_python(v) for v in obj]
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return [_to_python(v) for v in obj.tolist()]
+    return obj
+
+
 def call_tool(tool_name: str, params: dict) -> dict:
     """
     Dispatch a tool call by name.
 
     params must already contain resolved column names and file_path(s).
     Returns a raw result dict; never raises — errors are returned as {"error": str}.
+    All numpy scalars are converted to plain Python types so the result is
+    always JSON-serializable.
     """
     fn = TOOL_DISPATCH.get(tool_name)
     if fn is None:
         return {"error": f"Unknown tool: {tool_name!r}"}
     try:
-        return fn(params)  # type: ignore[operator]
+        result = fn(params)  # type: ignore[operator]
+        return _to_python(result)
     except FileNotFoundError as exc:
         return {"error": f"File not found: {exc}"}
     except KeyError as exc:

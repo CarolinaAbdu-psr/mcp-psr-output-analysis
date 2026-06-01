@@ -68,9 +68,9 @@ Return ONLY valid JSON — a list of fully-resolved tool specs.
 Each item must have "name" and "params" with ALL parameters resolved (real file paths, real column names):
 
 [
-  {
+  {{
     "name": "df_analyze_bounds",
-    "params": {
+    "params": {{
       "file_path": "/absolute/path/to/file.csv",
       "target_col": "Zinf",
       "lower_bound_col": "Zsup +- Tol (low)",
@@ -78,8 +78,8 @@ Each item must have "name" and "params" with ALL parameters resolved (real file 
       "reference_val_col": "Zsup",
       "iteration_col": "Iteration",
       "lock_threshold": 0.005
-    }
-  }
+    }}
+  }}
 ]
 
 Return an empty list [] if no tools are needed.

@@ -7,6 +7,11 @@ If none confirm, it falls back to the top-ranked entry point.
 
 Unlike the normal traversal (which tests CHILDREN with their tools), this node
 tests the ENTRY POINTS THEMSELVES — they have not been confirmed yet.
+
+Parameter resolution (file_path, column names) is delegated to
+_select_and_resolve_tools, which makes one LLM call per entry point to map
+placeholder params to real catalog paths and column names — the same mechanism
+used by graph_navigator for child nodes.
 """
 from __future__ import annotations
 
@@ -14,20 +19,10 @@ from ..tools.dataframe_tools import call_tool
 from ..tools.graph_loader import load_graph
 from ..utils import get_logger
 
-# Reuse hypothesis testing and parameter resolution from graph_navigator
-from .graph_navigator import _hypothesis_holds, _validate_file_params
+# Reuse hypothesis testing and full LLM-based param resolution from graph_navigator
+from .graph_navigator import _hypothesis_holds, _select_and_resolve_tools
 
 _log = get_logger("verify_entry")
-
-
-def _resolve_params(tool_spec: dict, csv_catalog: dict, results_dir: str) -> dict | None:
-    """Extract and validate file/column params from a tool spec."""
-    try:
-        params = dict(tool_spec.get("params", {}))
-        return _validate_file_params(params, csv_catalog, results_dir)
-    except Exception as exc:
-        _log.warning("  [verify_entry] _resolve_params failed: %s", exc)
-        return None
 
 
 def verify_entry_point(state: dict) -> dict:
@@ -67,30 +62,39 @@ def verify_entry_point(state: dict) -> dict:
             [t["name"] for t in tools_list],
         )
 
-        # Run ALL tools for this entry point (no LLM sub-selection — verify fully)
-        entry_results: list[dict] = []
-        for tool_spec in tools_list:
-            resolved = _resolve_params(tool_spec, csv_catalog, results_dir)
-            if resolved is None:
-                _log.warning("  [verify_entry] param resolution failed for %s", tool_spec["name"])
-                entry_results.append({
-                    "tool_name": tool_spec["name"],
-                    "params": tool_spec.get("params", {}),
-                    "result": {"error": "Parameter resolution failed"},
-                })
-                continue
+        # Use the same LLM-based resolution as graph_navigator:
+        # pass the entry node as "child_node" so the LLM resolves file_path
+        # and column names from the catalog before we call the tools.
+        resolved_tools = _select_and_resolve_tools(
+            child_node=entry_node,
+            csv_catalog=csv_catalog,
+            results_dir=results_dir,
+            prior_results=None,
+            parent_node_id="(entry-verification)",
+            case_metadata=case_metadata,
+        )
 
+        entry_results: list[dict] = []
+        for tool_spec in resolved_tools:
             _log.debug("  [verify_entry] calling %s", tool_spec["name"])
-            result = call_tool(tool_spec["name"], resolved)
+            result = call_tool(tool_spec["name"], tool_spec["params"])
 
             if "error" in result:
-                _log.warning("  [verify_entry] %s returned error: %s", tool_spec["name"], result["error"])
+                _log.warning(
+                    "  [verify_entry] %s returned error: %s",
+                    tool_spec["name"],
+                    result["error"],
+                )
             else:
-                _log.debug("  [verify_entry] %s succeeded — keys: %s", tool_spec["name"], list(result.keys()))
+                _log.debug(
+                    "  [verify_entry] %s succeeded — keys: %s",
+                    tool_spec["name"],
+                    list(result.keys()),
+                )
 
             entry_results.append({
                 "tool_name": tool_spec["name"],
-                "params": resolved,
+                "params": tool_spec["params"],
                 "result": result,
             })
 
