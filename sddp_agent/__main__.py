@@ -170,11 +170,11 @@ def main() -> None:
     # (it was already set from sys.argv above, but this handles --debug after other args)
     setup_logging(debug=args.debug)
 
-    # Validate API key (support both OpenAI and Anthropic)
-    if not os.getenv("OPENAI_API_KEY") and not os.getenv("ANTHROPIC_API_KEY"):
+    # Validate API key — the agent uses ChatOpenAI exclusively
+    if not os.getenv("OPENAI_API_KEY"):
         print(
-            "[ERROR] No API key found.\n"
-            "Set OPENAI_API_KEY or ANTHROPIC_API_KEY in the .env file at the repo root.",
+            "[ERROR] OPENAI_API_KEY not found.\n"
+            "Add OPENAI_API_KEY=<your-key> to the .env file at the repo root.",
             file=sys.stderr,
         )
         sys.exit(1)

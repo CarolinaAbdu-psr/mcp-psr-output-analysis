@@ -10,16 +10,24 @@ tests the ENTRY POINTS THEMSELVES — they have not been confirmed yet.
 """
 from __future__ import annotations
 
-import json
-
 from ..tools.dataframe_tools import call_tool
 from ..tools.graph_loader import load_graph
 from ..utils import get_logger
 
 # Reuse hypothesis testing and parameter resolution from graph_navigator
-from .graph_navigator import _hypothesis_holds
+from .graph_navigator import _hypothesis_holds, _validate_file_params
 
 _log = get_logger("verify_entry")
+
+
+def _resolve_params(tool_spec: dict, csv_catalog: dict, results_dir: str) -> dict | None:
+    """Extract and validate file/column params from a tool spec."""
+    try:
+        params = dict(tool_spec.get("params", {}))
+        return _validate_file_params(params, csv_catalog, results_dir)
+    except Exception as exc:
+        _log.warning("  [verify_entry] _resolve_params failed: %s", exc)
+        return None
 
 
 def verify_entry_point(state: dict) -> dict:

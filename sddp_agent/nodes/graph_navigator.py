@@ -20,8 +20,9 @@ import json
 import textwrap
 from pathlib import Path
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from .. import get_model
 
 from ..system_prompt import SYSTEM_PROMPT
 from ..tools.catalog import build_catalog_summary
@@ -36,10 +37,8 @@ _TOOL_SELECTOR_RESOLVER_PROMPT = (_PROMPTS_DIR / "tool_selector_resolver_prompt.
 _EDGE_SELECTOR_PROMPT          = (_PROMPTS_DIR / "edge_selector_prompt.txt").read_text(encoding="utf-8")
 
 
-def _get_llm(max_tokens: int = 1024) -> ChatAnthropic:
-    import os
-    model = os.environ.get("SDDP_AGENT_MODEL", "claude-sonnet-4-6")
-    return ChatAnthropic(model=model, max_tokens=max_tokens, temperature=0.4)  # type: ignore[call-arg]
+def _get_llm(max_tokens: int = 1024):
+    return get_model.GPT_4_1
 
 
 def _short(text: str, n: int = 300) -> str:

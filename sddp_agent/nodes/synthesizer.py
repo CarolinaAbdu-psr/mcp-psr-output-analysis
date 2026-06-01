@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import os
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
+
+from .. import get_model
 
 from ..system_prompt import SYSTEM_PROMPT
 from ..utils import get_logger
@@ -80,9 +81,8 @@ Rules:
 """
 
 
-def _get_llm() -> ChatAnthropic:
-    model = os.environ.get("SDDP_AGENT_MODEL", "claude-sonnet-4-6")
-    return ChatAnthropic(model=model, max_tokens=2048, temperature=0.4)  # type: ignore[call-arg]
+def _get_llm():
+    return get_model.GPT_4_1
 
 
 def _extract_data_samples(all_tool_results: list[dict]) -> list[dict]:
