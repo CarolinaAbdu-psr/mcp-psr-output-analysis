@@ -46,6 +46,77 @@ def _short(text: str, n: int = 300) -> str:
     return s if len(s) <= n else s[:n] + f"… [{len(s)-n} more chars]"
 
 
+_PENALTY_TOOLS = {
+    "check_study_penalties",
+    "check_hydro_penalties",
+    "check_thermal_penalties",
+    "check_renewable_penalties",
+    "check_system_penalties",
+}
+
+
+def _fmt_params_debug(tool_name: str, params: dict) -> str:
+    """Return a concise one-line summary of the params sent to a tool."""
+    if tool_name in _PENALTY_TOOLS:
+        parts = []
+        if "case_path" in params:
+            parts.append(f"case_path={params['case_path']!r}")
+        if params.get("plant_name"):
+            parts.append(f"plant_name={params['plant_name']!r}")
+        if params.get("system_name"):
+            parts.append(f"system_name={params['system_name']!r}")
+        if params.get("penalty_names"):
+            parts.append(f"penalty_names={params['penalty_names']!r}")
+        return ", ".join(parts) if parts else "(no params)"
+    # Generic fallback — show all params abbreviated
+    return _short(json.dumps(params, ensure_ascii=False), 200)
+
+
+def _fmt_result_debug(tool_name: str, result: dict) -> str:
+    """Return a structured multi-line summary of a tool result for debug logs."""
+    if tool_name not in _PENALTY_TOOLS:
+        return f"keys={list(result.keys())}"
+
+    lines: list[str] = []
+
+    case = result.get("case", "?")
+    category = result.get("category", "?")
+    lines.append(f"    case={case!r}  category={category!r}")
+
+    # Plant-level tools (hydro/thermal/renewable/system) return a list under
+    # "plants" or "systems".
+    items: list[dict] = result.get("plants") or result.get("systems") or []
+    if items:
+        lines.append(f"    entities_checked ({len(items)}): {[r['name'] for r in items]}")
+        for entry in items:
+            penalties = entry.get("penalties", {})
+            if penalties:
+                pen_summary = "  ".join(
+                    f"{name}={d.get('value')}({d.get('status')})"
+                    for name, d in penalties.items()
+                )
+                lines.append(f"      {entry['name']}: {pen_summary}")
+        custom_entities = [r["name"] for r in items
+                           if any(d.get("status") == "custom"
+                                  for d in r.get("penalties", {}).values())]
+        if custom_entities:
+            lines.append(f"    ★ custom (review): {custom_entities}")
+    else:
+        # Study-level — flat penalties dict
+        penalties: dict = result.get("penalties", {})
+        if penalties:
+            pen_summary = "  ".join(
+                f"{name}={d.get('value')}({d.get('status')})"
+                for name, d in penalties.items()
+            )
+            lines.append(f"    penalties: {pen_summary}")
+        custom_pen = [n for n, d in penalties.items() if d.get("status") == "custom"]
+        if custom_pen:
+            lines.append(f"    ★ custom (review): {custom_pen}")
+
+    return "\n".join(lines) if lines else f"keys={list(result.keys())}"
+
+
 # ---------------------------------------------------------------------------
 # Post-resolution validation (file existence + fuzzy catalog fallback)
 # ---------------------------------------------------------------------------
@@ -54,6 +125,11 @@ def _validate_file_params(resolved: dict, csv_catalog: dict, results_dir: str) -
     """
     Make file paths absolute and verify they exist.
     Falls back to a fuzzy catalog match when a file is not found.
+
+    Also validates case_path (used by penalty tools and df_check_nonconvexity_policy):
+    if the LLM-resolved path doesn't exist, infers it as the parent directory of
+    results_dir so the user's actual study path is always used, not a stale path
+    from case_metadata.
     """
     for key in ("file_path", "file_path_a", "file_path_b", "file_path_max"):
         if key not in resolved:
@@ -71,6 +147,28 @@ def _validate_file_params(resolved: dict, csv_catalog: dict, results_dir: str) -
             if matched:
                 resolved[key] = str(Path(results_dir) / matched)
                 _log.debug("  [validate] corrected to %r", resolved[key])
+
+    # case_path is used by penalty tools and df_check_nonconvexity_policy.
+    # The LLM sometimes picks up a stale path from case_metadata (e.g. a Dropbox path
+    # from the original HTML) instead of deriving it from results_dir.
+    # Always infer from results_dir to ensure we use the user's actual study directory.
+    if "case_path" in resolved:
+        inferred = str(Path(results_dir).parent)
+        provided = str(resolved["case_path"])
+        if not Path(provided).is_dir():
+            _log.warning(
+                "  [validate] case_path=%r is not a directory — overriding with %r",
+                provided, inferred,
+            )
+            resolved["case_path"] = inferred
+        elif Path(provided).resolve() != Path(inferred).resolve():
+            # Path exists but differs from what results_dir implies — use results_dir
+            _log.debug(
+                "  [validate] case_path=%r overridden with results_dir parent %r",
+                provided, inferred,
+            )
+            resolved["case_path"] = inferred
+
     return resolved
 
 
@@ -288,13 +386,21 @@ def execute_graph_node(state: dict) -> dict:
         # 2. Execute each selected tool
         edge_results: list[dict] = []
         for tool_spec in tools_to_run:
-            _log.debug("  [tool] calling %s", tool_spec["name"])
+            _log.debug(
+                "  [tool] calling %s  params: %s",
+                tool_spec["name"],
+                _fmt_params_debug(tool_spec["name"], tool_spec["params"]),
+            )
             result = call_tool(tool_spec["name"], tool_spec["params"])
 
             if "error" in result:
-                _log.warning("  [tool] %s returned error: %s", tool_spec["name"], result["error"])
+                _log.warning("  [tool] %s → ERROR: %s", tool_spec["name"], result["error"])
             else:
-                _log.debug("  [tool] %s succeeded — keys: %s", tool_spec["name"], list(result.keys()))
+                _log.debug(
+                    "  [tool] %s → OK\n%s",
+                    tool_spec["name"],
+                    _fmt_result_debug(tool_spec["name"], result),
+                )
 
             edge_results.append({
                 "tool_name": tool_spec["name"],

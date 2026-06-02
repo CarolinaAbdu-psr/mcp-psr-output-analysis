@@ -51,6 +51,10 @@ For each selected tool, resolve ALL parameters to their final values:
 - df_get_head / df_get_summary → use the most relevant file for the hypothesis context
 - df_check_nonconvexity_policy → NO CSV file needed. Set ONLY "case_path" = parent dir of results_dir.
   Example: if results_dir is "/cases/caso_base/results", set case_path to "/cases/caso_base".
+- check_study_penalties / check_hydro_penalties / check_thermal_penalties /
+  check_renewable_penalties / check_system_penalties → NO CSV file needed.
+  Set ONLY "case_path" = parent dir of results_dir (same rule as df_check_nonconvexity_policy).
+  NEVER use any path from case_metadata for case_path — always derive it from results_dir.
 
 **Column resolution rules:**
 - Replace EVERY placeholder column name with the EXACT column name found in the chosen file's catalog entry.

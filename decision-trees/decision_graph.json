@@ -16,7 +16,7 @@
       "purpose": "Ponto de entrada para falha de convergência",
       "content": {
         "description": "Avalia se o caso convergiu. CRITÉRIO CORRETO: convergência é atingida quando Zinf entra dentro do intervalo de confiança [Lower_CI, Upper_CI] do Zsup — não é necessário que Zinf iguale exatamente o Zsup. Se na última iteração o valor de Zinf já está dentro desse intervalo, o caso convergiu.",
-        "expected_state": "Se Zinf estiver DENTRO do intervalo [Lower_CI, Upper_CI] na última iteração → caso CONVERGIU: interrompa a análise e informe resultado positivo. Se Zinf estiver FORA do intervalo → caso NÃO convergiu: siga para as próximas etapas."
+        "expected_state": "Zinf está FORA do intervalo de confiança [Lower_CI, Upper_CI] na última iteração, confirmando que o caso NÃO convergiu e esta análise de não-convergência é pertinente."
       },
       "tools": [
         {

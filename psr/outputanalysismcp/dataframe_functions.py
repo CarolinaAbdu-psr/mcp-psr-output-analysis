@@ -406,13 +406,15 @@ def analyze_composition(
         if max_threshold is not None:
             mask |= work["_target_share_pct"] > max_threshold
 
-        for _, row in work[mask].iterrows():
+        use_label_col = label_col and label_col in df.columns
+        for idx, row in work[mask].iterrows():
             pct    = float(row["_target_share_pct"])
             status = (
                 "Below Min" if (min_threshold is not None and pct < min_threshold)
                 else "Above Max"
             )
-            critical.append({"label": row[label_col], "percentage": pct, "status": status})
+            label_val = row[label_col] if use_label_col else idx
+            critical.append({"label": label_val, "percentage": pct, "status": status})
 
     return {
         "global_summary": {

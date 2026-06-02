@@ -20,7 +20,10 @@ from ..utils import get_logger
 _log = get_logger("synthesizer")
 
 _SYNTHESIS_PROMPT = """\
-You have completed the SDDP diagnostic graph traversal. Compose the final diagnosis.
+You have completed an SDDP diagnostic traversal. Write a diagnostic narrative that walks \
+the reader through the analysis exactly as a senior engineer would explain it to someone \
+who wants to learn the method — building the reasoning step by step, from the first check \
+to the final conclusion.
 
 ## User question
 {user_query}
@@ -28,55 +31,80 @@ You have completed the SDDP diagnostic graph traversal. Compose the final diagno
 ## Case metadata (study configuration)
 {case_metadata}
 
-## Graph traversal path
+## Graph traversal path (internal reference only — do NOT mention this in the response)
 {traversal_path}
 
 ## Conclusion(s) reached
 {conclusions}
 
-## All tool results collected during traversal
-Each entry shows the graph node where the tool was called, the tool name, and its full result.
-Use these numbers to populate the "Dados de Suporte" table — cite actual values.
+## Tool results collected during traversal
+The entries are ordered chronologically: the first entry is the first check performed,
+the last is the final check before the conclusion.
+Each entry: node where the tool ran, tool name, full result dict.
+Every factual claim in the narrative MUST be grounded in one of these results.
 {all_tool_results}
 
-## Recent conversation history (for tone and language reference)
+## Recent conversation history (for language and tone reference)
 {conversation_history}
 
 ## Instructions
-Produce a structured diagnosis in the SAME LANGUAGE as the user question.
-Use this exact format:
 
-```
-## Diagnóstico: <conclusion node label>
+Write a flowing diagnostic narrative in the SAME LANGUAGE as the user question.
+Do NOT mention: nodes, graphs, LLMs, decision trees, traversal, internal tool names,
+or any analysis infrastructure. Write as if you personally ran each check.
 
-### O que os dados mostram
-<Cite specific numeric values from the tool results above.
- For each key metric, state the value found and whether it crosses the relevant threshold.
- If df_analyze_bounds was run: state converged=true/false, current_value, interval.
- If df_analyze_composition was run: state the operating cost share % and which stages are critical.
- If df_analyze_stagnation was run: state is_stagnated, cv_pct, net_change.
- If df_analyze_violation was run: state the verdict (SYSTEMATIC/FREQUENT/SEASONAL) and top columns.
- If df_analyze_cmo was run: state has_zero_values, has_negative_values, top dispersed stages.
- If a tool returned an error, state that the metric was unavailable.>
+---
 
-### Causa raiz
-<Technical explanation grounded in the documentation content from the conclusion entries.
- Explain WHY the data pattern observed leads to the diagnosed problem.>
+### Narrative structure
 
-### Recomendação
-<Specific corrective action(s) with priority order if multiple steps are needed.>
+**Title line**
+One bold line: the diagnosis conclusion (use the conclusion node label, translated naturally).
 
-### Dados de Suporte
-| Métrica | Valor encontrado | Limiar / Referência | Status |
-|---|---|---|---|
-| <key metric from tool results> | <actual number from data> | <threshold or norm> | ✅ / ⚠️ / ❌ |
-```
+**Opening sentence**
+One sentence: what problem was reported and in which case.
 
-Rules:
-- Cite specific numbers from tool_results — never invent values.
-- If multiple conclusions were reached (multiple branches), produce one section per conclusion,
-  then an overall summary at the end.
-- Use case_metadata to enrich the context (number of stages, series, model version, etc.).
+**One paragraph per check performed** (follow the chronological order of tool_results):
+  - Start each paragraph with a short sentence explaining WHY this particular metric
+    was the right thing to check next (the SDDP domain logic behind the choice).
+  - State what was found: cite the EXACT numbers from the tool result.
+    • df_analyze_bounds  → cite current_value, interval [low, high], converged true/false,
+                           is_locked, accuracy_trend.
+    • df_analyze_stagnation → cite status (Stagnated/Active), cv_pct or net_change if present.
+    • df_analyze_composition → cite target_share_of_total_pct, total_critical_found,
+                               and the stages flagged (from critical_scenarios list).
+    • df_analyze_heatmap / df_filter_above_threshold → cite how many stages/agents exceeded
+                               the threshold and the top offenders by name.
+    • df_analyze_violation → cite the verdict label, frequency or ratio found, top columns.
+    • df_analyze_cmo → cite has_zeros, has_negatives, top dispersed stages.
+    • check_*_penalties → cite which penalty names were found and their values.
+    • df_check_nonconvexity_policy → cite NonConvexityRepresentationInPolicy value.
+    • If a tool returned an error, say the metric was unavailable and move on.
+  - End the paragraph with one sentence that either confirms the hypothesis for this step
+    ("Esse padrão confirma que...") or rules it out and explains the pivot
+    ("Como X não foi detectado, a investigação avançou para...").
+
+**Root-cause paragraph**
+Explain WHY the observed data pattern produces the diagnosed problem.
+Ground this in the documentation content from the conclusion entries.
+Use SDDP-domain language: Benders cuts, FCF, policy vs. simulation, etc.
+
+**Recommendation paragraph**
+Specific corrective actions, in priority order when there are multiple.
+Be concrete: what setting to change, what value to use, what to rerun.
+
+---
+
+### Style rules
+- Write in flowing prose — no bullet lists inside paragraphs, no markdown tables.
+- Use bold (**text**) only for the title line and for key numeric findings inline
+  (e.g. "o Zinf atingiu **2.345 $/MWh**, fora do intervalo **[2.890 – 2.950]**").
+- Each paragraph should be 3–6 sentences. Avoid single-sentence paragraphs.
+- Transitions between paragraphs must make causal sense
+  ("Como a estagnação foi confirmada, o próximo passo foi investigar...").
+- If multiple independent conclusions were reached, write one narrative block per
+  conclusion, then one final paragraph summarising the overall picture.
+- Use case_metadata to add context: number of stages, series, model version, horizon.
+- Never invent numbers. If a value is absent from tool_results, omit that claim.
 - Respond strictly in the same language as the user question.
 """
 
